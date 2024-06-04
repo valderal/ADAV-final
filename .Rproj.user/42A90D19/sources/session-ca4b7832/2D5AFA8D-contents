@@ -1,0 +1,480 @@
+---
+title: " Final Assignment"
+author: "Osman Bahadir, Timo Scholts, Valerie Schilting"
+date: "2024-05-14"
+output:
+  html_document:
+    toc: true
+    number_sections: true
+    toc_float: true
+    code_folding: show
+    theme: cosmo
+---
+
+# Introduction
+Pokemon come in a broad variety of designs and abilities, from the well-known Pikachu to box legendaries as Zamazenta and Lugia.
+Each Pokemon has different "stats" that decide how powerful its attacks are, or how quickly their turn is in battle.
+The stats are shortly explained below:
+
+* HP: how much hit points a Pokemon has in total, and thus how much damage it can take before it faints;
+* Attack: how much damage a physical attack does;
+* Defense: how much damage a Pokemon actually takes from a physical attack;
+* Special Attack: how much damage a special attack does;
+* Special Defense: how much damage a Pokemon actually takes from a special attack;
+* Speed: when the Pokemon can take its turn in battle - higher speed means it's more likely to go first.
+
+These stats together make up the base total stats, which is simply the sum of all other stats.
+Earlier stage Pokemon in the evolution line, such as Charmander or Smoliv, will have lower base stats than their final stage evolutions.
+Pokemon that appear in starting areas also tend to have lower base total stats compared to those in later areas of the games.
+Legendary and pseudo-legendary Pokemon often have the highest base total stats, with 780 being currently the highest for Mega Mewtwo X and Y, and Mega Rayquaza.
+With patterns like these being present, it is interesting to look at how prevalent these patterns actually are, and if they are statistically significant or not.
+To do this, we use [The Complete Pokemon Dataset](https://www.kaggle.com/datasets/rounakbanik/pokemon) from Kaggle to do this.
+This dataset contains information on all 802 Pokemon from Generation 1 through 7, such as English and Japanese names, typing, base stats, base happiness, etc.
+
+The research question we are trying to answer is:
+
+<center>
+
+_What attributes of a Pokemon contribute to higher base stats?_
+
+</center>
+
+# Data exploration
+## Data cleaning
+```{r, chunk options, echo = FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+```{r, library}
+library(tidyverse)
+library(caret)
+library(grid)
+library(gridExtra)
+```
+
+```{r, data preprocessing}
+# setting seed for easy duplication
+set.seed(48645156)
+
+# importing the dataset from the \data folder
+pokemon <- read_csv("data/pokemon_sort.csv")
+data.frame(head(pokemon, 3)) 
+
+# removing unused columns
+pokemon <- select(pokemon, -c("japanese_name", "abilities", "classfication", 
+                              "attack":"speed", "percentage_male"))
+
+# check if column are the correct class
+sapply(pokemon, class)
+pokemon$capture_rate <- as.numeric(pokemon$capture_rate)
+
+# NA introduced to coercion, so searching for it and correcting it
+item_count <- 1
+for (item in pokemon$capture_rate) {
+  if (is.na(item) == TRUE) {
+    print(pokemon[item_count, ])
+    item_count <- item_count + 1
+  } else {
+    item_count <- item_count + 1
+  }
+}
+
+# minior has two forms that it switches to if it falls below 50% HP, so the new
+# capture rate value will be the average of the two forms
+pokemon[774, "capture_rate"] <- (30+255)/2
+
+# add dummy variables for each type
+all_values <- c("poison", "flying", "dark", "electric", "ice", "ground", "fairy", 
+                "grass", "fighting", "psychic", "steel", "fire", "rock", "water", 
+                "dragon", "ghost", "bug", "normal")
+
+# Create new columns for each value and fill with 1 or 0 based on type1 and type2
+for (val in all_values) {
+  pokemon <- pokemon %>%
+    mutate(!!val := as.numeric(type1 == val | type2 == val))
+}
+
+# search for NA's and see if they need to be replaced or not
+column_list <- colnames(pokemon)
+item_count <- 1
+for (col in column_list) {
+  if (sum(is.na(pokemon[item_count])) == 0) {
+    item_count <- item_count + 1
+  } else {
+      cat(col, ":\n", sum(is.na(pokemon[item_count])), "\n")
+      item_count <- item_count + 1
+  }
+}
+
+# changing type2 NA's to be none, and adding pokemon to single_type dummy
+pokemon$single_type <- 0
+item_count <- 1
+for (item in pokemon$type2) {
+  if (is.na(item) == TRUE) {
+    pokemon[item_count, "type2"] <- "none"
+    pokemon[item_count, "single_type"] <- 1
+    item_count <- item_count + 1
+  } else {
+    item_count <- item_count + 1
+  }
+}
+
+# changing the NA's for height and weight to be filled with column mean
+# Function to fill NaN values with column mean
+fill_na_with_mean <- function(df, column) {
+  df %>% 
+    mutate(!!sym(column) := ifelse(is.na(!!sym(column)), mean(!!sym(column), 
+                                                              na.rm = TRUE), 
+                                   !!sym(column)))
+}  
+
+# Columns to fill NaN values
+columns_to_fill <- c("height_m", "weight_kg")
+
+# Fill NaN values for each specified column
+for (col in columns_to_fill) {
+  pokemon <- fill_na_with_mean(pokemon, col)
+}
+```
+
+There are several variables with missing values, namely: `type2`, `height_m` and `weight_kg`.
+The missingness for `type2` is due to not all Pokemon having a secondary typing.
+To solve this, we change the value for those to be "none".
+However, the missingness for `height_m` and `weight_kg` is likely due to incorrect scraping from [Serebii](https://www.serebii.net/), and thus will be filled in using the column means.
+
+There was also one NA introduced in `capture_rate` due to coercion into numeric values.
+This ended up being the Pokemon Minior, which has two forms: its Meteor form, which has a capture rate of 30, and its Core form, which has a capture rate of 255.
+To solve this, we changed the `capture_rate` value for Minior to be the average between its two forms, since it switches once it HP falls below 50%.
+
+## Data visualisations
+### Violin plot
+The violin plot below shows per type the distribution of the base total statistic. 
+The types are sorted  from high mean base total  to low mean base total. 
+As shown in the graph the dragon type has the highest base stat on average. 
+When taking a closer look of the distribution of this type you can see that on the high end, between 600 and 800 there is a higher amount of dragon type Pokemon. 
+The dragon type not only has the highest base total statistic on average, but it also seems to contain the Pokemon with the highest base total statistic. 
+The steel type is the second highest type for the mean base total statistic. 
+The range of this type is much smaller than the dragon type. 
+There are no Pokemon on the high end of more than 700 base total stat and also no Pokemon on the low end of less then 300. 
+The bug type has on average the lowest base stat of all types. 
+The distribution shows that there are no Pokemon on the high end (>600) or the very high end (>700) and also there is a large amount of bug type pokemon of the low end (<300). 
+There are several violin plots that show two bulges which is especially apparent for the poison type. 
+An explanation for this is that when Pokemon evolve into their evolution their base stat jumps to above the average. 
+So because of the evolution trait of Pokemon it can be stated that the types are not normally distributed. 
+There will probably be a normal distribution among the Pokemon when the first second and final evolution will be split. 
+But the dataset does not contain information about whether the Pokemon is a first, second or third evolution. 
+It needs to be taken into account that the types of the Pokemon are split into a single type. 
+This means that there will be no insight in the distribution in the combinations of types.
+
+```{r, violin colors}
+# the pokemon types have a certain color that has to be attached to it. 
+# this will be done by writing a feature that will attach the applicable hex 
+# color to the type name
+colors <- c("normal" = "#A8A77A",
+            "fire"= "#EE8130",
+            "water"= "#6390F0",
+            "electric"= "#F7D02C",
+            "grass"= "#7AC74C",
+            "ice"="#96D9D6",
+            "fighting"= "#C22E28",
+            "poison"= "#A33EA1",
+            "ground"= "#E2BF65",
+            "flying"= "#A98FF3",
+            "psychic"= "#F95587",
+            "bug"= "#A6B91A",
+            "rock"= "#B6A136",
+            "ghost"= "#735797",
+            "dragon"= "#6F35FC",
+            "dark"= "#705746",
+            "steel"= "#B7B7CE",
+            "fairy"= "#D685AD")
+```
+
+```{r, violin  plot}
+# In order to compare the base total for each type it needs to be taken into 
+# account that pokemon can have two types. for this reason it was decided to 
+# duplicate the pokemon that have two types that it can be assigned to both 
+# types in the plot that will be made. This is done by filtering the pokemon 
+# that do not have NA. These filtered pokemon will then have type2 as the new 
+#type 1 and will then be binded with the original dataframe. 
+pokemon_with_type2 <- pokemon %>%
+  filter(!is.na(type2))
+
+pokemon_with_dups <- pokemon_with_type2 %>%
+  mutate(type1 = type2) %>%
+  bind_rows(pokemon_with_type2)
+
+pokemon_with_dups <- bind_rows(pokemon, pokemon_with_dups)
+
+
+# this code is used to order the types according to the mean base total per type. 
+# This will order the types for the ggplot that will be made that will compare 
+# the base total per type. 
+pokemon_with_dups$type1 <- factor(pokemon_with_dups$type1, 
+                                  levels = names(sort(tapply(pokemon_with_dups$base_total, 
+                                                             pokemon_with_dups$type1, mean), 
+                                                      decreasing = TRUE)))
+
+
+# this code is used to make a violin plot. this will show the distribution per 
+# type of pokemon based on thier base total. 
+violin_plot2 <- ggplot(pokemon_with_dups, aes(x = type1, 
+                                                             y = base_total, 
+                                                             fill = type1)) +
+    geom_violin() +
+    labs(
+      title = "Violin plot of base total stats per type ordered by the mean base
+      total of the pokemon for the type",
+      x = "Types",  
+      y = "Base Total",
+      fill = colors,  
+      caption = "Source:"
+    ) +
+    scale_fill_manual(
+      values = colors) + theme_minimal()
+
+violin_plot2
+```
+
+### Distribution plot
+The bar plots below show the distribution of each Pokemon type as both main type and secondary type.
+There is a noticeable lack of Pokemon with Flying as their first type, which seems to be only a thing of the latest two generations.
+However, Flying is overrepresented as a secondary type, with almost 100 Pokemon having Flying as their secondary type.
+Water, Normal and Bug are the most common first types for Pokemon, with Bug having a substantial increase in Generation 5.
+While Water still has a substantial amount of Pokemon as a secondary type, the same cannot be said for Bug and Normal, which, together with Electric, have the least Pokemon with it as a secondary type.
+
+```{r, type distrubution plot}
+# bar plot showing the distribution of each type (both main and secondary) per 
+# generation
+
+gen_levels <- c("7", "6", "5", "4", "3", "2", "1")
+type2_levels <- c("bug", "dark", "dragon", "electric", "fairy", "fighting", 
+                  "fire", "flying", "ghost", "grass", "ground", "ice", "normal",
+                  "poison", "psychic", "rock", "steel", "water", "none")
+
+plot_type1 <- ggplot(
+              pokemon, 
+              mapping = aes(x = type1,
+                            fill = factor(generation, levels = gen_levels))
+              ) +
+  geom_bar(stat = "count") + 
+  scale_fill_viridis_d() +
+  labs(subtitle = "Distribution for main type",
+       x = "Type",
+       y = "Count",
+       fill = "Generation") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+plot_type2 <- ggplot(pokemon, 
+              mapping = aes(x = factor(type2, levels = type2_levels),
+                            fill = factor(generation, levels = gen_levels))
+              ) +
+  geom_bar(stat = "count") + 
+  scale_fill_viridis_d() +
+  labs(subtitle = "Distribution for secondary type",
+       x = "Type",
+       y = "Count",
+       fill = "Generation") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+grid.arrange(plot_type1, plot_type2, ncol = 2,
+             top = textGrob("Pokemon type per generation", 
+                            gp=gpar(fontsize=15,font=3)))
+```
+
+
+### Correlation matrix
+The correlation matrix shows the correlation of each variable with the base total statistic.  In the previous code the type variable was dummy coded so that this would be numerical and be compared with the predictor variable. 
+Also some variables where removed as they where each a statistic that the base total statistic is based upon. The base total statistic is the sum of all these stats. 
+
+In the correlation matrix the top five highest and lowest variables are highlighted. A correlation rate of higher then 0.7 might indicate a chance multicollinearity.  The capture_rate has a chance of multicollinearity because of this. The reason for the collinearity might be that a high base stat Pokémon is harder to catch. It would be better not to include this into a model to make sure that there will not be any multicollinearity issues.
+```{r, correlation matrix}
+#delete numaric columns
+numeric_pokemon <- pokemon[sapply(pokemon, is.numeric)]
+
+# Calculate the correlation matrix
+correlation_matrix <- cor(numeric_pokemon)
+
+# Extract the 'base total' column
+base_total_corr <- correlation_matrix[, "base_total"]
+
+# Remove 'base total' self-correlation if present
+base_total_corr <- base_total_corr[names(base_total_corr) != "base_total"]
+
+# Sort the correlations
+sorted_corr <- sort(base_total_corr, decreasing = TRUE)
+
+
+# Load necessary library
+library(ggplot2)
+
+# Convert to data frame for ggplot
+corr <- data.frame(Parameter = names(sorted_corr), Correlation = sorted_corr)
+
+# Add a column for color classification
+corr$Highlight <- "Normal"
+corr$Highlight[1:5] <- "Top 5"      # Top 5 correlations
+corr$Highlight[(nrow(corr)-4):nrow(corr)] <- "Bottom 5"  # Bottom 5 correlations
+
+# Create a custom color palette
+custom_colors <- c("Top 5" = "dodgerblue", "Bottom 5" = "firebrick", 
+                   "Normal" = "grey70")
+
+# Create bar plot
+ggplot(corr, aes(x = reorder(Parameter, Correlation), y = Correlation, 
+                 fill = Highlight)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = custom_colors) +
+  coord_flip() +
+  labs(title = "Correlation with 'Base Total'", x = "Parameter", 
+       y = "Correlation") +
+  theme_minimal() +
+  theme(legend.title = element_blank())
+
+```
+
+# Methods
+In order to find out which predictors to choose, we will use best subset selection to determine which variable or variables are best suited as predictor variables for the base stats of a Pokemon, using the train-validation-test splits to fit the model.
+
+## Best subset selection
+```{r, data splitting}
+# df dataframe with all the useless columns out to create good datasets
+df <- select(pokemon, -c("name", "pokedex_number", "type1", "type2", 
+                                      "against_bug":"against_water"))
+
+# define the training partition 
+train_index <- createDataPartition(df$base_total, p = .5, 
+                                  list = FALSE, 
+                                  times = 1)
+
+# split the data using the training partition to obtain training data
+pokemon_train <- df[train_index,]
+
+# remainder of the split is the validation and test data (still) combined 
+pokemon_val_and_test <- df[-train_index,]
+
+# split the remaining 50% of the data in a validation and test set
+val_index <- createDataPartition(pokemon_val_and_test$base_total, p = .6, 
+                                  list = FALSE, 
+                                  times = 1)
+
+pokemon_valid <- pokemon_val_and_test[val_index,]
+pokemon_test  <- pokemon_val_and_test[-val_index,]
+
+```
+
+```{r, subset selection}
+# MSE function from lab 3
+mse <- function(y_true, y_pred) {
+  mean((y_true - y_pred)^2)
+}
+
+# MSE on a validation dataset for predictions from a linear model function from
+# lab 4
+lm_mse <- function(formula, train_data, valid_data) {
+  y_name <- as.character(formula)[2]
+  y_true <- valid_data[[y_name]]
+  
+  lm_fit <- lm(formula, train_data)
+  y_pred <- predict(lm_fit, newdata = valid_data)
+  
+  mean((y_true - y_pred)^2)
+}
+
+# sourcing the generate formulas function from lab 4
+source("generate_formulas.R")
+
+# object with all potential predictor variables
+x_vars <- colnames(select(df, -base_total))
+
+# function to find the best model for x amount of predictors, using code from
+# lab 4
+best_n_preds <- function(n) {
+  formulas <- generate_formulas(p = n, x_vars = x_vars, y_var = "base_total")
+  amount <- length(formulas)
+  mses <- rep(0, amount)
+  for (i in 1:amount) {
+    mses[i] <- lm_mse(as.formula(formulas[i]), pokemon_train, pokemon_valid)
+  }
+  best_preds <- formulas[which.min(mses)]
+  min_mse <- lm_mse(as.formula(best_preds), pokemon_train, pokemon_valid)
+  cat(best_preds, "| MSE", min_mse)
+}
+
+# find the best models for 1 to 5 predictors
+# time to compute on high-end pc: ~3 minutes (as point of reference for how long 
+# this will take, especially with laptops this can and will take longer)
+for (bip in 1:5) {
+  cat(bip, "predictor(s):\n")
+  best_n_preds(bip)
+  cat("\n")
+}
+
+# trying 5 predictor model
+mse_5_pred <-lm_mse(base_total ~ generation + is_legendary + height_m + 
+                      capture_rate + single_type, pokemon_train, pokemon_valid)
+summary(lm(as.formula(base_total ~ generation + is_legendary + height_m + 
+                      capture_rate + single_type), data = pokemon_train))
+
+# trying 3 predictor model
+summary(lm(base_total ~ is_legendary + height_m + capture_rate, 
+           data = pokemon_train))
+
+# saving values of final 3 predictor model
+formula_3_pred <- base_total ~ is_legendary + height_m + capture_rate
+mse_3_pred <- lm_mse(as.formula(formula_3_pred), pokemon_train, pokemon_valid)
+```
+
+According to the best subset selection, the best predictors are `generation`, `is_legendary`, `height_m`, `capture_rate` and `single_type`.
+This would give us an MSE of `r mse_5_pred`.
+We could have gone further with the best subset selection, however due to computing time and the risk of overfitting it was decided against.
+The rate at which the MSE dropped already started to slow down substantially from 3 predictors onwards as well, which is a trend very likely to be observed further if we calculated for more predictors.
+However, when looking at the significance levels of the 5 predictor regression model, `generation` and `single_type` are not significant at all and should therefore be excluded from the model.
+When excluding those variables, we end up with a model that does hold significance for all its variables.
+
+This means that the final model we end up with is `base_total ~ is_legendary + height_m + capture_rate`, which has an MSE of `r mse_3_pred`.
+
+## Training the model
+```{r, lab 3 replication}
+# training model on train and validation seperately
+model_train <- lm(as.formula(formula_3_pred), data = pokemon_train)
+(model_train_mse <- mse(y_true = pokemon_train$base_total, 
+                       y_pred = predict(model_train)))
+
+model_valid_mse <- mse(y_true = pokemon_valid$base_total, 
+                         y_pred = predict(object = model_train, 
+                                          newdata = pokemon_valid))
+cat("Estimated out-of-sample MSE:", model_valid_mse)
+
+# retraining model
+model_2 <- lm(as.formula(formula_3_pred), 
+              data = bind_rows(pokemon_train, pokemon_valid))
+summary(model_2)
+
+model_2_mse_test <- mse(y_true = pokemon_test$base_total, 
+                        y_pred = predict(model_2, newdata = pokemon_test))
+model_2_mse_test
+```
+
+The MSE of the model increased when testing it on the test data.
+It went from `r model_valid_mse` to `r model_2_mse_test`, which is an increase of `r model_2_mse_test - model_valid_mse`.
+Seems to be within bounds.
+
+
+
+# Contributions
+## Osman
+* Data preprocessing
+* Correlation matrix
+* Splitting data into train/validation/test sets
+
+## Timo
+* Violin plot
+* Text for violin plot and correlation matrix
+
+## Valerie
+* Introduction
+* Data preprocessing
+* Type distribution plot
+* Best subset selection and model training
+* Cleaning up Rmd and code

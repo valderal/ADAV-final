@@ -1,5 +1,5 @@
 ---
-title: "Assignment - Part 1"
+title: " Final Assignment"
 author: "Osman Bahadir, Timo Scholts, Valerie Schilting"
 date: "2024-05-14"
 output:
