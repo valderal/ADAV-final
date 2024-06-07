@@ -460,6 +460,16 @@ The MSE of the model increased when testing it on the test data.
 It went from `r model_valid_mse` to `r model_2_mse_test`, which is an increase of `r model_2_mse_test - model_valid_mse`.
 Seems to be within bounds.
 
+```{r}
+model <- lm(base_total~is_legendary+height_m+capture_rate, data=pokemon)
+ggplot(pokemon)+
+  geom_line()
+```
+
+
+## Regression
+
+
 
 
 # Contributions
