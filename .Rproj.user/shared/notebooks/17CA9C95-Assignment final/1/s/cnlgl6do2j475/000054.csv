@@ -1,0 +1,6 @@
+"0","pokemon_test$weight_f <- ifelse(pokemon_test$weight_kg < 50, ""Light"", ""Medium"") %>% 
+  ifelse(pokemon_test$weight_kg >= 100, ""Heavy"", pokemon_test$weight_f)
+"
+"2","Error in ifelse(., pokemon_test$weight_kg >= 100, ""Heavy"", pokemon_test$weight_f) : 
+  unused argument (pokemon_test$weight_f)
+"

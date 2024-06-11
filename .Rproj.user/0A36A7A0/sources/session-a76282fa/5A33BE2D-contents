@@ -1,0 +1,491 @@
+---
+title: "Exploring the effects of Anxiety and Stress on the presence of Depression"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+date: "2024-01-18"
+author: "Loes Derks (6692648), Nena de Gier (2317761), Noa Hoevers (9076588), Valerie Schilting (9400508)"
+---
+GHE: Life expectancy and healthy life expectancy. (n.d.). https://www.who.int/data/gho/data/themes/mortality-and-global-health-estimates/ghe-life-expectancy-and-healthy-life-expectancy#:~:text=Globally%2C%20life%20expectancy%20has%20increased,to%2073.4%20years%20in%202019
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+```{r, Loading packages}
+library(tidyverse)
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(magrittr)
+library(psych)
+library(pROC)
+library(report)
+library(kableExtra)
+```
+# Introduction
+The Depression Anxiety Stress Scale (DASS) measures psychological and physiological signs of depression, anxiety and stress through a self-reported questionnaire. The scale defines depression as an inability to experience enjoyment, anxiety as feeling apprehensive and worried, and stress as feeling tense and irritable. A high score on the scale may indicate the presence of either of these concepts, and is especially suitable for measuring signs of stress, including difficulty in relaxing, nervous arousal, being easily agitated, and being over-reactive (Kelty et al., 2023).
+The DASS measures depression, anxiety, and stress through 42 questions (Lovibond & Lovibond, 1995). Additionally, several questions were asked to determine one’s personality types and to discern 13 demographic characteristics. These characteristics include age, gender, education, where someone grew up, English as a native language, dexterity, religion, sexual orientation, ethnicity, voting behavior, marital status, amount of siblings, and major in University. Some technical information was collected as well, including time spent on answering the questions, the ISO code from the country the user connected from, and the screen size of the device used. The data was collected from 2017 to 2019, through an online survey provided by openpsychometrics.org, making it a convenience sample. Only the respondents that allowed their data to be used for research are included, which resulted in 39 775 cases.
+
+Our research question is as follows:
+Do anxiety, stress, age, gender and type of area during childhood predict depression? 
+
+```{r, Loading the dataset & data cleanup}
+
+datat <- read.csv("data.csv", sep="\t")
+
+#only using useful variables and omitting NA's
+dass <- dplyr::select(datat, ends_with("A"), "age", "gender", "urban")
+dass[dass == 0] <- NA
+dass[dass >= 70] <- NA
+dass <- na.omit(dass)
+nrow(dass)
+
+# adjust gender: remove "other" option
+dass <- dass %>%
+  filter(gender != 3) %>%
+  mutate(gender = ifelse(gender == 1, 0, 1))
+
+
+# making a new variable for the sum of scored points for every question of the DASS)
+dass$totaldass<-rowSums(dass[,1:42], na.rm=TRUE)
+
+#compute stress in scales: normal (4-14), mild (19-22), moderate (23-28), severe (30-37), extremely severe (38+)
+dass$stresstot<- rowSums(dass[, c("Q1A", "Q6A", "Q8A", "Q11A", "Q12A", "Q14A", "Q18A", "Q22A", "Q27A", "Q29A", "Q32A", "Q33A", "Q35A", "Q39A")])
+
+
+#compute anxiety in scales: normal (4-11), mild (12-13), moderate (14-18), severe (19-23), extremely severe (24+)
+dass$anxietytot<- rowSums(dass[, c("Q2A", "Q4A", "Q7A", "Q9A", "Q15A", "Q19A", "Q20A", "Q23A", "Q25A", "Q28A", "Q30A", "Q36A", "Q40A", "Q41A")])
+
+
+#compute depression as dichotome, where 1 includes scales severe and extremely severe (scores 25+)
+dass$depressiontot<- rowSums(dass[, c("Q3A", "Q5A", "Q10A", "Q13A", "Q16A", "Q17A", "Q21A", "Q24A", "Q26A", "Q31A", "Q34A", "Q37A", "Q38A", "Q42A")])
+
+dcut_points<- c(-Inf, 34, Inf)
+dass$depression<-cut(dass$depressiontot, breaks = dcut_points, labels = c(0,1), include.lowest = TRUE)
+```
+
+```{r, checking type of variables}
+class(dass$depression)
+class(dass$anxietytot)
+class(dass$stresstot)
+class(dass$age)
+class(dass$gender)
+class(dass$urban)
+```
+All zeroes were turned into NA’s, as zeroes indicate the question wasn’t completed.
+Depression, anxiety and stress are measured using their respective questions within the original 42 of the DASS; see Appendix A for the questions belonging to each concept. Both anxiety and stress are the total scores of respondents on either scale. Since the questionnaire used 1-4 for the answer categories, this means that both anxiety and stress have a possible range of 14-56. To get more insight on the meaning of the total scores, we use the following categories:
+
+ - anxiety: normal (14-21), mild (22-23), moderate (24-28), severe (29-33), extremely severe (44+);
+ 
+ - stress: normal (14-28), mild (29-32), moderate (33-39), severe (40-47) and extremely severe (48+).
+ 
+Depression follows the same logic, however it is made into a dichotomous dependent variable by cutting it off based on the total score for depression (score of 35 or higher). The cutoff point coincides with the minimum score for severe depression. This makes 0 meaning the respondent has up to moderate depression according to this test, and 1 meaning the respondent has severe or extremely severe depression. Depression, anxiety and stress are all factor variables.
+
+Gender is a dichotomous variable where 1 represents males and 2 represents females. The third option, “Other”, was removed due to it being too small to properly interpret the results for. Cases aged 70 years or more were removed as well. This cutoff point was chosen because it is close to the general age of retirement. Urban depicts the type of area in which the respondent grew up, where 1 being rural (countryside), 2 suburban and 3 urban (town, city). These three variables are all integer variables. These adjustments in the dataset have resulted in N = `r nrow(dass)`.
+
+```{r, Descriptive statistics}
+dass_descr <- dass[c('depression', 'anxietytot', 'stresstot', 'age', 'gender', 'urban')]
+psych::describe(dass_descr, skew = FALSE) %>%
+  knitr::kable(caption = 'Descriptive statistics', digits = 3) %>%
+  kableExtra::kable_classic()
+```
+
+The table above shows the descriptive statistics for our dependent and independent variables. Anxiety and stress both have a mean in the category "moderate" instead of "normal" or "mild", which would be more expected in the population. This is probably due to self-selection bias, since people who think they have depression, anxiety and/or stress tend to look up questionnaires more often to confirm or deny their suspicions. Given the range of 13-69, a mean of approximately 23 for age stands out, being on the low side. This shows that the variable for age is heavily skewed towards the right, with an abundance of younger people in this dataset. Since it was an online convenience sample, this distribution could be explained by younger people being more active on the internet, and thus finding questionnaires like this earlier than older people. There are also significantly more people who grew up in a (sub)urban area, given the mean of 2.243 for urban.
+
+
+## Exploratory Data Analysis
+Exploratory Data Analysis (EDA) involves examining and understanding the structure, patterns, and relationships within a dataset. In the provided code, the describe function is used to generate descriptive statistics for the entire dataset, providing an overview of key measures like mean and standard deviation. Following this, visualizations are created to offer a more intuitive understanding of specific variables. For instance, a histogram is created to visualize the distribution of age, which shows a skewed distribution in this variable. The bar plot for gender distribution shows significantly more females (2) than males (1) participated in the study. The bar plot created for stress shows a significantly lower score for 'normal' in comparison to the other scores, and interestingly the bar plot for 'anxiety' shows no cases scored as normal or mild, only moderate, severe and extremely severe.
+
+```{r, Exploratory Data Analysis}
+
+# Descriptive statistics for the entire dataset
+describe(dass, skew = FALSE)
+
+# Visualization of distribution of age
+ggplot(dass, aes(x = age)) + geom_histogram(binwidth = 5, fill = "blue", color = "black") +
+  labs(title = "Distribution of age")
+
+dass <- dass %>%
+  mutate(
+	stress_category = case_when(
+  	stresstot <= 28 ~ "Normal",
+  	stresstot <= 32 ~ "Mild",
+  	stresstot <= 39 ~ "Moderate",
+  	stresstot <= 47 ~ "Severe",
+  	TRUE        	~ "Extremely Severe"
+	),
+	anxiety_category = case_when(
+  	anxietytot <= 21 ~ "Normal",
+  	anxietytot <= 23 ~ "Mild",
+  	anxietytot <= 28 ~ "Moderate",
+  	anxietytot <= 33 ~ "Severe",
+  	TRUE       	~ "Extremely Severe"
+	)
+  )
+
+
+factor_levels <- c("Normal", "Mild", "Moderate", "Severe", "Extremely Severe")
+
+dass$stress_category <- factor(dass$stress_category, levels = factor_levels)
+dass$anxiety_category <- factor(dass$anxiety_category, levels = factor_levels)
+
+# Bar plot for stress
+ggplot(dass, aes(x = stress_category, fill = stress_category)) +
+  geom_bar() +
+  labs(title = "Distribution of stress levels")
+
+# Bar plot for anxiety
+ggplot(dass, aes(x = anxiety_category, fill = anxiety_category)) +
+  geom_bar() +
+  labs(title = "Distribution of anxiety levels")
+
+ggplot(dass, aes(x = as.factor(depression))) +
+  geom_bar(fill = "green3") +
+  labs(title = "Distribution of depression")
+
+# Bar plot for gender distribution (1 = male, 2 = female)
+ggplot(dass, aes(x = gender)) + geom_bar(fill = "pink") +
+  labs(title = "Gender Distribution")
+```
+
+When it comes to building and comparing models, we decided to include five models. The models are cumulative, where we started off with just anxiety predicting depression, adding stress, age, gender and type of area during childhood in the following models.
+
+```{r models}
+mod1<-glm(depression ~ anxietytot, family = binomial, data = dass)
+
+mod2<-glm(depression ~ anxietytot + stresstot, family = binomial, data = dass)
+
+mod3<-glm(depression ~ anxietytot + stresstot + age, family = binomial, data = dass)
+
+mod4<-glm(depression ~ anxietytot + stresstot + age + gender, family = binomial, data = dass)
+
+mod5<-glm(depression ~ anxietytot + stresstot + age + gender + urban, family = binomial, data = dass)
+```
+
+## Compare models
+We have performed several tests to compare the models mentioned above. The Likelihood Ratio Test indicated model 5 has the best fit, however, the difference between model 5 and model 4 is quite small at 8.809. As model 4, using one less parameter, is a simpler model, it may be better to continue with model 4 instead.  
+
+```{r likelihood ratio test}
+#deviance indicates significant reduction in residual deviance -> latter is better mod. (mod5 best)
+anova(mod1, mod2, test = "Chisq") #dev = 4158.9***
+anova(mod2, mod3, test = "Chisq") #9.605**
+anova(mod3, mod4, test = "Chisq") #276.17***
+anova(mod4, mod5, test = "Chisq") #8.089**
+```
+The AIC and BIC values for model 4 and 5 are again quite similar, while still being much lower than the other models’ values. According to the AIC, model 5 has the best fit, while BIC nominates model 4 as the best fitting model. Again, as the models barely differ, we argue it is better to continue with model 4 as it is the simpler model of the two.
+
+```{r AIC & BIC}
+#compare models based on AIC and BIC (model5 best for AIC, mod4 for BIC) lower = better
+aic_mod1<-AIC(mod1) 
+aic_mod2<-AIC(mod2) 
+aic_mod3<-AIC(mod3) 
+aic_mod4<-AIC(mod4) 
+aic_mod5<-AIC(mod5) #the AIC value is lowest for model 5, which the value being 35155.9; model 4 = 35161.99
+
+bic_mod1<-BIC(mod1) 
+bic_mod2<-BIC(mod2) 
+bic_mod3<-BIC(mod3) 
+bic_mod4<-BIC(mod4) 
+bic_mod5<-BIC(mod5) #the BIC value is lowest for model 4, with the value being 35204.81; model 5 = 35207.29
+
+cat("AIC values:\n", aic_mod1, aic_mod2, aic_mod3, aic_mod4, aic_mod5, "\n")
+cat("BIC values:\n", bic_mod1, bic_mod2, bic_mod3, bic_mod4, bic_mod5, "\n")
+```
+We have used a confusion matrix to assess the classification performance of our models. While a confusion matrix has its problematic side, we only use it as another indicator to decide what model fits best. As we only consider model 4 and 5 as contenders, they are the only ones we ran confusion matrices for. When rounding the percentages for accuracy, sensitivity and specificity to whole numbers, model 4 and model 5 are exactly the same. This suggests the area where someone grew up does not result in more accurate predictions for depression, which is why we will continue our analysis with model 4. 
+
+```{r Confusion Matrix}
+model_list <- list(mod1, mod2, mod3, mod4, mod5)
+
+# Create lists to store predicted classifications and confusion matrices
+predictions <- list()
+confusion_matrices <- list()
+
+# Loop through the models
+for (i in seq_along(model_list)) {
+  
+  # Predicted probabilities
+  prob <- predict(model_list[[i]], type = "response")
+  
+  # Binary classification based on the threshold of 0.5
+  pred <- ifelse(prob > 0.5, 1, 0)
+  
+  # Confusion matrix
+  cm <- table(pred = pred, true = dass$depression)
+  
+  # Assign to lists
+  predictions[[i]] <- pred
+  confusion_matrices[[i]] <- cm
+  
+  # Print the confusion matrix
+  print(cm)
+}
+```
+# The confusion matrix can be interpreted as follows:
+
+# True positives (bottom right) - correctly predicting people that are depressed
+# True negatives (top left) - correctly predicting people that are not depressed
+# False positives (bottom left) - predicted people are depressed , when they’re not
+# False negatives (top right) - predicting people are not depressed, when they are
+
+```{r Calc mod4}
+# Our best model is model 4
+selected_model <- model_list[[4]]
+
+# Predicted probabilities
+selected_prob <- predict(selected_model, type = "response")
+
+# Binary classification based on the threshold of 0.5
+selected_pred <- ifelse(selected_prob > 0.5, 1, 0)
+
+# Confusion matrix
+selected_cm <- table(pred = selected_pred, true = dass$depression)
+
+#
+TN <- selected_cm[1, 1]
+FN <- selected_cm[1, 2]
+TP <- selected_cm[2, 2]
+FP <- selected_cm[2, 1]
+
+# Calculating accuracy (.7876), sensitivity (.7832) and specificity (.7920)
+tibble(
+  ACCURACY = (TP + TN) / sum(selected_cm),
+  SENSITIVITY = TP / (TP + FN),
+  SPECIFICITY = TN / (TN + FP)
+  )
+```
+```{r Calc mod5}
+selected_model <- model_list[[5]]
+
+# Predicted probabilities
+selected_prob <- predict(selected_model, type = "response")
+
+# Binary classification based on the threshold of 0.5
+selected_pred <- ifelse(selected_prob > 0.5, 1, 0)
+
+# Confusion matrix
+selected_cm <- table(pred = selected_pred, true = dass$depression)
+
+#
+TN <- selected_cm[1, 1]
+FN <- selected_cm[1, 2]
+TP <- selected_cm[2, 2]
+FP <- selected_cm[2, 1]
+
+# Calculating accuracy (.7876), sensitivity (.7831) and specificity (.7922)
+tibble(
+  ACCURACY = (TP + TN) / sum(selected_cm), 
+  SENSITIVITY = TP / (TP + FN),
+  SPECIFICITY = TN / (TN + FP)
+  )
+```
+
+# Model accuracy is 0.787, meaning that 79% of people are correctly classified.
+
+# Model sensitivity is 0.783, meaning that if a person has depression, there is a 78% chance the model will detect this.
+
+# Model specificity is 0.792, meaning that if a person doesn’t have depression, there is an 79% chance the model will detect this.
+
+
+## Assumptions
+The assumptions for a logistic model include the presence of a balanced, binary outcome variable; a continuous predictor variable that is linearly related to the logit; a sufficiently large sample size; the absence of multicollinearity; and the absence of influential cases or outliers. This paragraph is aimed at checking these assumptions for the fourth model, regressing anxiety, stress, age and gender on depression.
+
+```{r, Binary dependent variable check}
+dass %>% 
+  ggplot(aes(x = depression, fill = depression)) +
+  geom_bar() +
+  labs(x = "depression",
+       y = "Count",
+       title = "Distribution of the outcome variable") +
+  theme_bw()
+```
+### Balanced outcome variable check
+In the plot shown above, it can be seen that the classes are very balanced. To acquire this, we downsampled the 1 class indicating depression to be more balanced in comparison to class 0. This step was undertaken in the data cleaning section, which can be found above.
+
+```{r Sufficiently large sample size check}
+depr_count <- dass%>% 
+  count(depression) %>% 
+  mutate(prop = n / sum(n))
+ssize_cal <- function(k, p){
+  round((10*k)/p)
+}
+ssize_cal(5, 0.5)
+sum(depr_count$n)
+```
+
+We need at least 100 samples for our logistic regression, which we certainly have: our sample consists of `r nrow(dass)` cases. When looking at the two depression groups, the ‘depressed’ group is slightly larger than the non-depressed group, with `r ` more cases.
+
+```{r Multicollinearity check}
+library(regclass)
+VIF(mod4)
+```
+All predictors have VIF-scores below 2. Given scores above 10 indicate multicollinearity, we have no VIF-scores exceeding that threshold and can thus safely assume the absence of multicollinearity.
+
+```{r continuous predictor is linearly related to the logit check}
+
+dass$logit <- predict(mod4, type = "link")
+
+dass %>% 
+ggplot(aes(age, logit))+
+  geom_point(size = 0.5, alpha = 0.5) +
+  geom_smooth(method = "glm") + 
+  theme_bw()
+
+dass %>% 
+ggplot(aes(stresstot, logit))+
+  geom_point(size = 0.5, alpha = 0.5) +
+  geom_smooth(method = "glm") + 
+  theme_bw()
+
+dass %>% 
+ggplot(aes(anxietytot, logit))+
+  geom_point(size = 0.5, alpha = 0.5) +
+  geom_smooth(method = "glm") + 
+  theme_bw()
+```
+
+Age seems to be negatively linearly related to the predicted logit values, while anxiety and stress are positively related to the predicted logit values. Lack of linearity would hinder the interpretation of the regression results and thus the predictive capacities of the predictors. However, we have no reason to consider linearity violated, so we can continue checking the last assumption.
+
+
+
+```{r Influential cases or outliers check}
+plot(mod4, which = c(4, 5))
+```
+not sure how to read this?
+
+```{r check outliers}
+sc9747<-dass[9747,]
+print(sc9747)
+
+sc14517<-dass[14517,]
+print(sc14517)
+
+sc21932<-dass[21932,]
+print(sc21932)
+```
+Cook’s distance nominates three cases as outliers: cases 9747, 14517, and 21932. The residuals versus leverage plot indicates 9747 as the most influential outlier, but not to a worrisome extent. When analysing the three cases, we could see the first is a man aged 68, the second a woman aged 67 and the third a woman aged 64. It becomes clear that they were likely classified as outliers due to them reporting normal levels of stress and anxiety, yet being depressed as well. We think this can be explained due to feelings of loneliness as a result of not having an active social network, as these people likely do not have a job (anymore), and may have no family or friends near them. As plenty of research (including those during the COVID-19 pandemic) have demonstrated, a lack of social contact can result in feelings of depression, and our presumption is that this is the case for these outliers. Therefore, we deem there is non reason to exclude these cases for our analysis.
+
+## Results
+```{r, Regression table}
+table.mod4 <- as.data.frame(report(mod4))
+opts <- options(knitr.kable.NA = "")
+kable(table.mod4, caption = "Logistic regression analysis of the effects of anxiety, stress, age, and gender on the presence of depression", digits = 3) %>%
+  kableExtra::kable_classic()
+```
+As can be seen in the table above, all predictor variables significantly and positively predict depression. The only exception is gender, which predicts a negative influence on depression, yet still significantly. Given the thresholds for anxiety and stress for a normal, mild, moderate, severe and extremely severe presence differ from each other and depression, we need to take this into account when interpreting the coefficients. Looking at the indication for severe, which we used as a cut-off for depression, the minimum score for depression is 35, while this is 29 for anxiety and 40 for stress. Put differently, the threshold for anxiety is reached ‘quicker’ than the one for depression, while the threshold for stress requires the highest score to be crossed. Therefore, it is not that surprising that an increase in stress predicts a larger increase in depression at 0.132 than anxiety does at 0.063. The effect of age is quite small at 0.003, likely due to the skewed distribution of age. Being female predicts a lower score on depression with an estimate of -0.535, however, the distribution of gender is quite skewed as the amount of male respondents is close to triple the female respondents, which makes it more difficult to accurately interpret these findings.
+
+
+# Appendix
+## Appendix A: DASS questionnaire, sorted per concept
+Each question had the following possible answer categories:
+
+1. Did not apply to me at all
+
+2. Applied to me to some degree, or some of the time
+
+3. Applied to me to a considerable degree, or a good part of time
+
+4. Applied to me very much, or most of the time
+
+**Depression**
+
+* Q3A: I couldn't seem to experience any positive feeling at all
+
+* Q5A: I just couldn't seem to get going
+
+* Q10A: I felt that I had nothing to look forward to
+
+* Q13A: I felt sad and depressed
+
+* Q16A: I felt that I had lost interest in just about everything
+
+* Q17A: I felt I wasn't worth much as a person
+
+* Q21A: I felt that life wasn't worthwhile
+
+* Q24A: I couldn't seem to get any enjoyment out of the things I did
+
+* Q26A: I felt down-hearted and blue
+
+* Q31A: I was unable to become enthusiastic about anything
+
+* Q34A: I felt I was pretty worthless
+
+* Q37A: I could see nothing in the future to be hopeful about
+
+* Q38A: I felt that life was meaningless
+
+* Q42A: I found it difficult to work up the initiative to do things
+
+**Anxiety**
+
+* Q2A: I was aware of dryness of my mouth
+
+* Q4A: I experienced breathing difficulty (eg, excessively rapid breathing, breathlessness in the absence of physical exertion)
+
+* Q7A: I had a feeling of shakiness (eg, legs going to give way)
+
+* Q9A: I found myself in situations that made me so anxious I was most relieved when they ended
+
+* Q12A: I felt that I was using a lot of nervous energy
+
+* Q15A: I had a feeling of faintness
+
+* Q19A: I perspired noticeably (eg, hands sweaty) in the absence of high temperatures or physical exertion
+
+* Q20A: I felt scared without any good reason
+
+* Q23A: I had difficulty in swallowing
+
+* Q25A: I was aware of the action of my heart in the absence of physical exertion (eg, sense of heart rate increase, heart missing a beat)
+
+* Q28A: I felt I was close to panic
+
+* Q30A: I feared that I would be "thrown" by some trivial but unfamiliar task
+
+* Q36A: I felt terrified
+
+* Q40A: I was worried about situations in which I might panic and make a fool of myself
+
+* Q41A: I experienced trembling (eg, in the hands)
+
+**Stress**
+
+* Q1A: I found myself getting upset by quite trivial things
+
+* Q6A: I tended to over-react to situations.
+
+* Q8A: I found it difficult to relax
+
+* Q11A: I found myself getting upset rather easily
+
+* Q14A: I found myself getting impatient when I was delayed in any way (eg, elevators, traffic lights, being kept waiting)
+
+* Q18A: I felt that I was rather touchy
+
+* Q22A: I found it hard to wind down
+
+* Q27A: I found that I was very irritable
+
+* Q29A: I found it hard to calm down after something upset me
+
+* Q32A: I found it difficult to tolerate interruptions to what I was doing
+
+* Q33A: I was in a state of nervous tension
+
+* Q35A: I was intolerant of anything that kept me from getting on with what I was doing
+
+
+## Appendix B: severity categories for the DASS concepts
+```{r}
+df <- data.frame(Depression = c("14-23", "24-27", "28-34", "35-41", "42+"),
+      Anxiety = c("14-21", "22-23", "24-28", "29-33", "34+"),
+      Stress = c("14-28", "29-32", "33-39", "40-47", "48+"))
+row.names(df) <- c("Normal", "Mild", "Moderate", "Severe", "Extremely severe")
+df
+```
+      
+      

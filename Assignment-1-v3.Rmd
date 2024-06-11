@@ -28,7 +28,7 @@ Earlier stage Pokemon in the evolution line, such as Charmander or Smoliv, will 
 Pokemon that appear in starting areas also tend to have lower base total stats compared to those in later areas of the games.
 Legendary and pseudo-legendary Pokemon often have the highest base total stats, with 780 being currently the highest for Mega Mewtwo X and Y, and Mega Rayquaza.
 With patterns like these being present, it is interesting to look at how prevalent these patterns actually are, and if they are statistically significant or not.
-To do this, we use [The Complete Pokemon Dataset](https://www.kaggle.com/datasets/rounakbanik/pokemon) from Kaggle to do this.
+To do this, we use [The Complete Pokemon Dataset](https://www.kaggle.com/datasets/rounakbanik/pokemon) from Kaggle.
 This dataset contains information on all 802 Pokemon from Generation 1 through 7, such as English and Japanese names, typing, base stats, base happiness, etc.
 
 The research question we are trying to answer is:
@@ -48,8 +48,10 @@ knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
 ```{r, library}
 library(tidyverse)
 library(caret)
-library(grid)
-library(gridExtra)
+library(ggpubr)
+library(knitr)
+library(kableExtra)
+library(report)
 ```
 
 ```{r, data preprocessing}
@@ -82,17 +84,6 @@ for (item in pokemon$capture_rate) {
 # minior has two forms that it switches to if it falls below 50% HP, so the new
 # capture rate value will be the average of the two forms
 pokemon[774, "capture_rate"] <- (30+255)/2
-
-# add dummy variables for each type
-all_values <- c("poison", "flying", "dark", "electric", "ice", "ground", "fairy", 
-                "grass", "fighting", "psychic", "steel", "fire", "rock", "water", 
-                "dragon", "ghost", "bug", "normal")
-
-# Create new columns for each value and fill with 1 or 0 based on type1 and type2
-for (val in all_values) {
-  pokemon <- pokemon %>%
-    mutate(!!val := as.numeric(type1 == val | type2 == val))
-}
 
 # search for NA's and see if they need to be replaced or not
 column_list <- colnames(pokemon)
@@ -135,6 +126,17 @@ columns_to_fill <- c("height_m", "weight_kg")
 for (col in columns_to_fill) {
   pokemon <- fill_na_with_mean(pokemon, col)
 }
+
+# add dummy variables for each type
+all_values <- c("poison", "flying", "dark", "electric", "ice", "ground", "fairy", 
+                "grass", "fighting", "psychic", "steel", "fire", "rock", "water", 
+                "dragon", "ghost", "bug", "normal")
+
+# Create new columns for each value and fill with 1 or 0 based on type1 and type2
+for (val in all_values) {
+  pokemon <- pokemon %>%
+    mutate(!!val := as.numeric(type1 == val | type2 == val))
+}
 ```
 
 There are several variables with missing values, namely: `type2`, `height_m` and `weight_kg`.
@@ -146,7 +148,7 @@ There was also one NA introduced in `capture_rate` due to coercion into numeric 
 This ended up being the Pokemon Minior, which has two forms: its Meteor form, which has a capture rate of 30, and its Core form, which has a capture rate of 255.
 To solve this, we changed the `capture_rate` value for Minior to be the average between its two forms, since it switches once it HP falls below 50%.
 
-## Data visualisations
+## Data visualizations
 ### Violin plot
 The violin plot below shows per type the distribution of the base total statistic. 
 The types are sorted  from high mean base total  to low mean base total. 
@@ -239,57 +241,62 @@ violin_plot2
 ### Distribution plot
 The bar plots below show the distribution of each Pokemon type as both main type and secondary type.
 There is a noticeable lack of Pokemon with Flying as their first type, which seems to be only a thing of the latest two generations.
-However, Flying is overrepresented as a secondary type, with almost 100 Pokemon having Flying as their secondary type.
+However, Flying is over represented as a secondary type, with almost 100 Pokemon having Flying as their secondary type.
 Water, Normal and Bug are the most common first types for Pokemon, with Bug having a substantial increase in Generation 5.
 While Water still has a substantial amount of Pokemon as a secondary type, the same cannot be said for Bug and Normal, which, together with Electric, have the least Pokemon with it as a secondary type.
 
 ```{r, type distrubution plot}
-# bar plot showing the distribution of each type (both main and secondary) per 
-# generation
-
+# making levels to properly showcase the generations and types in the plots
 gen_levels <- c("7", "6", "5", "4", "3", "2", "1")
 type2_levels <- c("bug", "dark", "dragon", "electric", "fairy", "fighting", 
                   "fire", "flying", "ghost", "grass", "ground", "ice", "normal",
-                  "poison", "psychic", "rock", "steel", "water", "none")
+                  "poison", "psychic", "rock", "steel", "water")
 
-plot_type1 <- ggplot(
-              pokemon, 
-              mapping = aes(x = type1,
-                            fill = factor(generation, levels = gen_levels))
+# generating plot with only main type
+plot_type1 <- ggplot(pokemon, 
+                     aes(x = type1, 
+                         fill = factor(generation, levels = gen_levels))
               ) +
   geom_bar(stat = "count") + 
   scale_fill_viridis_d() +
-  labs(subtitle = "Distribution for main type",
+  labs(title = "Pokemon type per generation",
+       subtitle = "Distribution for main type",
        x = "Type",
        y = "Count",
        fill = "Generation") +
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
 
-plot_type2 <- ggplot(pokemon, 
-              mapping = aes(x = factor(type2, levels = type2_levels),
-                            fill = factor(generation, levels = gen_levels))
+# generating plot with only secondary type 
+plot_type2 <- ggplot(data = subset(pokemon, type2 != "none"),
+                     aes(x = factor(type2, levels = type2_levels),
+                         fill = factor(generation, levels = gen_levels))
               ) +
   geom_bar(stat = "count") + 
   scale_fill_viridis_d() +
-  labs(subtitle = "Distribution for secondary type",
+  labs(title = "",      # without this the plots don't align nicely in the grid
+       subtitle = "Distribution for secondary type",
        x = "Type",
-       y = "Count",
-       fill = "Generation") +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+       y = "Count") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+        legend.position = "none")
 
-grid.arrange(plot_type1, plot_type2, ncol = 2,
-             top = textGrob("Pokemon type per generation", 
-                            gp=gpar(fontsize=15,font=3)))
+# combining both plots with a common legend
+ggarrange(plot_type1, plot_type2, common.legend = TRUE, legend = "right")
 ```
 
 
 ### Correlation matrix
-The correlation matrix shows the correlation of each variable with the base total statistic.  In the previous code the type variable was dummy coded so that this would be numerical and be compared with the predictor variable. 
-Also some variables where removed as they where each a statistic that the base total statistic is based upon. The base total statistic is the sum of all these stats. 
+The correlation matrix shows the correlation of each variable with the base total statistic.
+In the previous code the type variable was dummy coded so that this would be numerical and be compared with the predictor variable. 
+Also some variables where removed as they where each a statistic that the base total statistic is based upon.
+The base total statistic is the sum of all these stats. 
 
-In the correlation matrix the top five highest and lowest variables are highlighted. A correlation rate of higher then 0.7 might indicate a chance multicollinearity.  The capture_rate has a chance of multicollinearity because of this. The reason for the collinearity might be that a high base stat Pokémon is harder to catch. It would be better not to include this into a model to make sure that there will not be any multicollinearity issues.
+In the correlation matrix the top five highest and lowest variables are highlighted.
+Capture rate has the highest correlation with the total stats, likely because Pokemon with a higher capture rate tend to be early game Pokemon and/or first stages of the evolution line.
+Other variables with notable high correlation are height, legendary status, base egg steps and base happiness.
+
 ```{r, correlation matrix}
-#delete numaric columns
+# delete numeric columns
 numeric_pokemon <- pokemon[sapply(pokemon, is.numeric)]
 
 # Calculate the correlation matrix
@@ -303,10 +310,6 @@ base_total_corr <- base_total_corr[names(base_total_corr) != "base_total"]
 
 # Sort the correlations
 sorted_corr <- sort(base_total_corr, decreasing = TRUE)
-
-
-# Load necessary library
-library(ggplot2)
 
 # Convert to data frame for ggplot
 corr <- data.frame(Parameter = names(sorted_corr), Correlation = sorted_corr)
@@ -428,7 +431,7 @@ mse_3_pred <- lm_mse(as.formula(formula_3_pred), pokemon_train, pokemon_valid)
 According to the best subset selection, the best predictors are `generation`, `is_legendary`, `height_m`, `capture_rate` and `single_type`.
 This would give us an MSE of `r mse_5_pred`.
 We could have gone further with the best subset selection, however due to computing time and the risk of overfitting it was decided against.
-The rate at which the MSE dropped already started to slow down substantially from 3 predictors onwards as well, which is a trend very likely to be observed further if we calculated for more predictors.
+The rate at which the MSE decreased already started to slow down substantially from 3 predictors onward as well, which is a trend very likely to be observed further if we calculated for more predictors.
 However, when looking at the significance levels of the 5 predictor regression model, `generation` and `single_type` are not significant at all and should therefore be excluded from the model.
 When excluding those variables, we end up with a model that does hold significance for all its variables.
 
@@ -436,7 +439,7 @@ This means that the final model we end up with is `base_total ~ is_legendary + h
 
 ## Training the model
 ```{r, lab 3 replication}
-# training model on train and validation seperately
+# training model on train and validation separately
 model_train <- lm(as.formula(formula_3_pred), data = pokemon_train)
 (model_train_mse <- mse(y_true = pokemon_train$base_total, 
                        y_pred = predict(model_train)))
@@ -457,19 +460,105 @@ model_2_mse_test
 ```
 
 The MSE of the model increased when testing it on the test data.
-It went from `r model_valid_mse` to `r model_2_mse_test`, which is an increase of `r model_2_mse_test - model_valid_mse`.
-Seems to be within bounds.
+It went from `r round(model_valid_mse, 0)` to `r round(model_2_mse_test, 0)`, which is an increase of `r round(model_2_mse_test - model_valid_mse, 0)`.
+While it is a seemingly large increase, `r round(((model_2_mse_test - model_valid_mse) / model_valid_mse) * 100, 2)`% increase is still low enough to be usable without further tweaking.
 
-```{r}
-model <- lm(base_total~is_legendary+height_m+capture_rate, data=pokemon)
-ggplot(pokemon)+
-  geom_line()
+
+# Results
+
+```{r, reg table prep}
+# saving the model to a variable for easier calling
+model_test <- lm(base_total ~ is_legendary + height_m + capture_rate, 
+                 data = pokemon_test)
+
+# make the report package do the hard work of making a summary that can be 
+# coerced into a dataframe to make kable usable, and removing unwanted rows and
+# columns
+model_report <- report(model_test)
+df_report <- as.data.frame(model_report)
+df_report <- df_report[-c(6,7,8,11), -c(3,9:11)]
+colnames(df_report) <- c("Parameter", "Estimate", "CI low", "CI high", 
+                         "t-value", "df", "p-value", "Model fit")
 ```
 
+The results of the multiple linear regression analysis using the test dataset can be found in the table below.
+The variables chosen through subset selection explain the variance in the total stats of a Pokemon quite well, with an adjusted $R^2$ of `r round(df_report[7, 8], 2)`, meaning that `r round(df_report[7, 8], 2)`% of the variance in `base_total` can be explained by `capture_rate`, `is_legendary` and `height_m`.
 
-## Regression
+```{r, reg table}
+# making sure kable NA are set to nothing so the table isn't filled with NA's
+opts <- options(knitr.kable.NA = "")
+
+# regression results table
+kable(df_report, 
+      digits = 3,
+      row.names = FALSE,
+      caption = "Linear regression analysis of the effects of legendary status, 
+      height and capture rate on the total stats of Pokemon") %>% 
+  kable_classic()
 
 
+
+```
+
+We found an increase of `r round(df_report[2, 2], 0)` points on the total stats if a Pokemon is legendary while holding the height and capture rate at 0 ($\beta$ = `r round(df_report[2, 2], 3)`, *t* (`r df_report[2, 6]`) = `r round(df_report[2, 5], 3)`, *p* < .001).
+For every additional meter a Pokemon is tall, their total stats increase with `r round(df_report[3, 2])` when holding the other variables constant ($\beta$ = `r round(df_report[3, 2], 3)`, *t* (`r df_report[3, 6]`) = `r round(df_report[3, 5], 3)`, *p* < .001).
+Capture rate works differently from the other variables, since a higher capture rate means the Pokemon is easier to catch.
+Therefore, for every unit increase in capture rate, the total stats decrease with `r round(df_report[4, 2], 2)`points when holding the other variables constant ($\beta$ = `r round(df_report[4, 2], 3)`, *t* (`r df_report[4, 6]`)= `r round(df_report[4, 5], 3)`, *p* < .001).
+
+```{r, regression plot}
+# create new dataset for plot specifically
+plot_data <- expand.grid(
+  capture_rate = pokemon_test$capture_rate,
+  height_m = c(min(pokemon_test$height_m),
+             mean(pokemon_test$height_m),
+             max(pokemon_test$height_m)),
+  is_legendary = pokemon_test$is_legendary
+)
+
+# predict y with the new dataset and transform continuous variable to make it
+# more readable
+plot_data$pred_y <- predict.lm(model_test, newdata = plot_data)
+plot_data$height_m <- round(plot_data$height_m, 2)
+
+# ggplot of fitted lines
+ggplot(pokemon_test, aes(x = capture_rate, y = base_total)) +
+  geom_point(size = 1) +
+  geom_line(data = plot_data, 
+            aes(x = capture_rate, 
+                y = pred_y,
+                color = as.factor(height_m),
+                linetype = as.factor(is_legendary)),
+            linewidth = 1) +
+  annotate(geom = "text", 
+           x = 170, 
+           y = 850, 
+           label = " = 466 + (-0.737*CR) + (134*L) + (19*H)") +
+  labs(title = "Base total stats of a Pokemon as a function 
+of capture rate, legendary status and height",
+       x = "Capture rate (CR)",
+       y = "Base total stats",
+       color = "Height in meters (H)",
+       linetype = "Legendary status (L)") +
+  scale_linetype(labels = c("No", "Yes")) +
+  scale_color_viridis_d()
+```
+
+The graph above shows the fitted linear regression lines for each variable.
+The height is divided to show the minimal, mean and maximal height for easier visualization.
+Interestingly, the model gives higher predictions of base total stats than the actual observed total stats.
+For instance, the highest possible predicted value (legendary Pokemon, `r max(pokemon_test$height_m)`m, capture rate `r min(pokemon_test$capture_rate)`) is `r round(max(predict(model_test)))`, while the observed highest value `r max(pokemon_test$base_total)` is.
+This is also seen for the lowest possible base stat, the predicted value (non-legendary, `r min(pokemon_test$height_m)`m, capture rate `r max(pokemon_test$capture_rate)`) is `r round(min(predict(model_test)))`, while the observed lowest value `r min(pokemon_test$base_total)` is.
+The highest and lowest total stats in the complete dataset are `r max(pokemon$base_total)` and `r min(pokemon$base_total)` respectively.
+
+# Conclusion
+
+There are a lot of factors that contribute to the base total stats of a Pokemon, other than the sum of the individual stats of course.
+To answer our research question regarding which factors contribute to a higher base stat, we used subset selection to determine which combination of predictors would generate the lowest possible MSE without risking overfitting.
+We used train-validation-test splits of the dataset to properly fit the model.
+The factors that were found, while still being statistically significant enough, were the capture rate, legendary status and height of the Pokemon.
+As seen earlier, these also correlated moderately with the total stats, so it isn't surprising that their relation is statistically significant as well.
+We found that tall, legendary Pokemon with a low capture rate are more likely to have higher base total stats than other Pokemon compared to those that are smaller, not legendary and with a high capture rate.
+These same results can also be found in our Shiny application, which can be found [here](https://9xk63c-timo-scholts.shinyapps.io/pokemon_shiny/).
 
 
 # Contributions
@@ -481,10 +570,15 @@ ggplot(pokemon)+
 ## Timo
 * Violin plot
 * Text for violin plot and correlation matrix
+* Code for duplicated Pokemon
+* The entire Shiny Application
 
 ## Valerie
 * Introduction
 * Data preprocessing
 * Type distribution plot
 * Best subset selection and model training
+* Results
+* Conclusion
 * Cleaning up Rmd and code
+* Edits based on feedback for distribution plot and correlation matrix

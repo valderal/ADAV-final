@@ -1,0 +1,1886 @@
+---
+title: "Assignment C"
+author: "Alissa Vavinova (7311885), Lotte Neijmeijer (6680313), Valerie Schilting (9400508)"
+date: "05/04/24"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: true
+    toc_depth: 4
+    df_print: paged
+    highlight: tango
+  html_document:
+    toc: true
+    toc_depth: 4
+    toc_float: false
+    df_print: paged
+    theme: cerulean
+    highlight: tango
+  word_document:
+    toc: true
+    toc_depth: '4'
+fontsize: 11pt
+subtitle: Group 12
+urlcolor: blue
+editor_options:
+  chunk_output_type: inline
+  markdown:
+    wrap: sentence
+bibliography: [references.bib, packages.bib]
+nocite: '@*'
+---
+
+```{r, setup, include=FALSE}
+knitr::opts_chunk$set(include = FALSE, echo = FALSE, 
+                      warning = FALSE, message = FALSE, 
+                      fig.pos = "H", out.extra = "")
+
+```
+
+```{r, library, warning = FALSE}
+
+library(knitr)
+library(bibtex)
+library(tinytex)
+library(mice)
+library(ggmice)
+library(naniar)
+library(devtools)
+library(VIM)
+library(psych)
+library(vtable)
+library(diffdf)
+library(finalfit)
+library(report)
+library(kableExtra)
+library(magrittr)
+library(gridExtra)
+library(dplyr)
+library(ggplot2)
+library(jtools) 
+library(olsrr)
+library(car)
+library(jtools)
+library(broom)
+library(broom.mixed)
+library(purrr)
+library(float)
+
+```
+
+# Theoretical Background
+
+A high pulse has often been associated with worse health outcomes [@mayoclinic-2023].
+However, a high pulse can be influenced, and thus the adverse health outcomes and risks can be mitigated.
+A common way to influence the pulse, or (resting) heart rate, is by exercise.
+@reimers-2018 conducted literature research on the effects of different types of sports on the resting heart rate (RHR).
+They found that overall exercise decreases RHR, and yoga and endurance training lowered RHR significantly in both sexes.
+Another study by @rennie-2003 found that moderate and vigorous activity were associated with a lower heart rate as well.
+Men had significantly lower RHR with both moderate and vigorous exercise, while women had significantly lower RHR with vigorous activity only.
+Overall lasting effects of alcohol on the cardiovascular system have been found by many, for example by @piano-2017.
+While a quickened heart rate is often found as an acute result of consuming alcohol, either diastolic or systolic dysfunction can emerge as a long-term effect of consuming alcohol.
+To improve the sense of agency over the possibility of mitigating the risks and to offer information as to what to do in order to mitigate this risk, this paper aims to investigate the effect and extent of those effects of recreational exercise and regular drinking on pulse in a sample of US American citizens.
+Age, sex and household income will be controlled for.
+
+## Research Question
+
+To what extent do recreational exercise and regular drinking have an effect on pulse when controlling for age, sex and household income? 
+
+Note: Weight (or BMI), sedentary time are further controls to be considered.
+
+# Methods
+
+## Dataset and descriptives
+
+The data was derived from the 2007-2008 wave of the National Health and Nutrition Examination Survey ([NHANES](https://www.icpsr.umich.edu/web/NACDA/studies/25505/versions/V3)).
+The NHANES assesses the the health and nutritional status of adults and children in the United States and combines personal interviews and physical examinations.
+It focuses on different population groups and health topics.
+
+```{r, loading dataset}
+# loading initial dataset
+data1 <- readRDS("g12_incomplete_data.rds")
+
+# drop index column
+data1 = select(data1, -id)
+
+# creating subset with the variables we will use
+data2 <- data1 %>% 
+  select(age, sex, weight, bmi, household_income, 
+         pulse, vig_rec, mod_rec, drink_regularly, time_sed)
+
+# set seed for reproducibility 
+set.seed(12)
+```
+
+```{r, loading full dataset}
+
+# loading full dataset
+data_full <- readRDS("g12_fully_observed_data.rds")
+summary(data_full)
+
+```
+
+```{r, descriptives setup}
+data_descr <- data2
+data_descr <- data_descr %>% 
+  mutate(sex_num = as.numeric(sex),
+         .before = sex) %>% 
+  mutate(vig_rec_num = as.numeric(vig_rec),
+         .before = vig_rec) %>% 
+  mutate(mod_rec_num = as.numeric(mod_rec),
+         .before = mod_rec) %>% 
+  mutate(drink_regularly_num = as.numeric(drink_regularly),
+         .before = drink_regularly) %>% 
+  mutate(household_income_num = as.numeric(household_income),
+         .before = household_income)
+
+desc_out <-  st(data_descr, 
+             out = "return",
+             summ = c(
+                      'notNA(x)',
+                      'mean(x)',
+                      'sd(x)',
+                      'median(x)',
+                      'min(x)',
+                      'max(x)',
+                      'countNA(x)',
+                      'propNA(x)'
+                      ),
+             summ.names = c(
+                            'N',
+                            'Mean/ Proportion',
+                            'Std. Dev.',
+                            'Median',
+                            'Min',
+                            'Max',
+                            'NA',
+                            'Prop. NA'
+                            ),
+             labels = c("Age",
+                        "Sex",
+                        "1 - 2",
+                        "Weight (in kg)",
+                        "BMI",
+                        "Household income",
+                        "1 - 12",
+                        "Pulse",
+                        "Vigorous recreational exercise",
+                        "1 - 2",
+                        "Moderate recreational exercise",
+                        "1 - 2",
+                        "Drinking regularly",
+                        "1 - 2",
+                        "Time spent sedentary (mins/day)"
+                        ),
+             factor.percent = FALSE,
+             digits = 3,
+             skip.format = NA
+             )
+```
+
+The data consists of `r ncol(data1)` variables, of which we use `r ncol(data2)`.
+Our dependent variable, *pulse*, is a continuous variable with a mean of `r mean(data2$pulse, na.rm = TRUE) %>% round()` BPM (sd = `r sd(data2$pulse, na.rm = TRUE) %>% round(3)`). 
+Linear regression modelling is chosen as methods to address the RQ.
+Our predictors are *mod_rec*, *vig_rec*, and *drink_regularly*, which are all binary categorical predictors with 'yes' or 'no' as levels.
+The variable labels stand for moderate recreational exercise, vigorous recreational exercise, and regular drinking respectively.
+Our control variables are *age*, *sex*, *weight*, and *household_income*.
+
+```{r, descriptives table, include = TRUE}
+desc_out %>% 
+  kable(caption = 'Descriptive statistics', digits = 3, 
+        format = "latex", booktabs =T) %>% 
+  kable_styling(latex_options = c("scale_down", "HOLD_position")) 
+
+```
+
+
+*Age* is a continuous variable, with a mean of `r mean(data2$age, na.rm = TRUE) %>% round()` years (sd = `r sd(data2$age, na.rm = TRUE) %>% round(3)`).
+*Sex* and *household income* are categorical variables, with *sex* being binary having 'male' and 'female' as possible levels, and *household income* a factor with multiple levels, which are listed below.
+Variables we have considered to add are *sedentary time (time_sed)*, *weight* or *BMI*.
+*Time_sed* is a continuous variable measuring the time spent in minutes sitting on an average day, and has a mean of `r mean(data2$time_sed, na.rm = TRUE) %>% round()` minutes a day (sd = `r sd(data2$time_sed, na.rm = TRUE) %>% round(3)`), which is about `r round(mean(data2$time_sed, na.rm = TRUE)/60)` hours a day.
+*Weight* is measured body weight in kilograms and is continuous, with a mean of `r mean(data2$weight, na.rm = TRUE) %>% round(2)` kg (sd = `r sd(data2$weight, na.rm = TRUE) %>% round(3)`).
+
+*BMI* is also a continuous variable with a mean of `r mean(data2$bmi, na.rm = TRUE) %>% round()` (sd = `r sd(data2$bmi, na.rm = TRUE) %>% round(3)`).
+Note that *BMI* has the highest proportion of missingness with `r round(propNA(data2$bmi), 3)`.
+
+```{r, bmi impute}
+
+# mutate BMI for cases with observed both weight and height
+round(propNA(data1$bmi), 3)
+data1 <- data1  %>%  
+  mutate (bmi = round (weight/((height/100)^2),2))
+round(propNA(data1$bmi), 3)
+
+# updating the subset with the variables we will use
+data2 <- data1 %>% 
+  select(age, sex, weight, bmi, household_income,
+         pulse, vig_rec, mod_rec, drink_regularly, time_sed)
+```
+
+As *BMI* is as a deterministic variable, calculated by weight divided by squared height, the values were imputed deductively by calculation for cases having the observed weight and height.
+The percentage of missing values decreased from 58% to 31%.
+Therefore the updated version is used.
+
+Table note: the categorical variables are sorted according to number. For example, "Sex 1 - 2" means that 1 is male and 2 is female.
+
+## Exploratory Data Analysis
+
+### Correlations
+
+```{r, correlations}
+var_cor <- round(cor(data2[, c("age", "weight", "bmi", "pulse", "time_sed")], 
+                     use = "pairwise.complete.obs"), 3)
+
+# updating the subset with the variables, drop bmi
+data2 <- data1 %>% 
+  select(age, sex, weight, household_income,
+         pulse, vig_rec, mod_rec, drink_regularly, time_sed)
+```
+
+Correlations between all used variables were calculated using Pearson correlations.
+A table showing the correlations can be found in Appendix A. Weak positive correlations were found between *pulse* and *weight* (r = `r var_cor[4, 2]`) and *pulse* and *BMI* (r = `r var_cor[3,4]`).
+*BMI* and *weight* were strongly positively correlated, which is to be expected based on how *BMI* is calculated.
+In the further analyses only *weight* variable is retained.
+As these are exploratory analyses, no p-values have been calculated yet.
+We are using pairwise deletion here as this is the way to keep the largest amount of data while still being able to calculate correlations.
+As we are not using these correlations in any way other than exploration right now, we do not have to worry about issues with the standard deviations that might come up.
+We made plots to reveal distributions of and associations between variables, which can be found in Appendix B.
+
+### Response rates
+
+The total amount of missing data in the subset of relevant variables for our research question is `r sum(is.na(data2))` missing data points.
+The missing data in the entire dataset and in the variables relevant to our RQ are visualized in Appendix C. Most of the missing cases are found on *BMI*, even after they are mitigated by calculating the *BMI* score manually using height and weight, if present.
+The missingness for *vigorous* and *moderate exercise* has complete overlap, e.g. anyone who has missing values on one of them also misses the other.
+
+The covariance coverage is shown here.
+On the diagonal, the proportion of values present is shown for each individual variable, and the pairwise presence of variables is shown outside of the diagonals.
+E.g. the proportion of complete data for variable pairs *vig_rec* (also *mode_rec*) and *drink_regularly* is 0.67, with *weight* 0.70. Treating the missing data is reasonable for more informed investigation of the RQ. 
+
+```{r, covariance coverage, include = TRUE}
+cc <- mice::md.pairs(data2)$rr / nrow(data2)
+cc %>% 
+  kable(caption = "Covariance coverage", digits = 2, 
+        format = "latex", booktabs =T) %>% 
+  kable_styling(latex_options = c("scale_down","HOLD_position")) 
+
+```
+
+### Response patterns
+
+From the figure below (only on selected variables), we can once again see that the missingness for *vigorous* and *moderate exercise* have complete overlap.
+The data would contain 291 observations if all incomplete cases are excluded.
+In the Appendix C the missing patterns for all variables with missing values are visualized and commented, to observe how missing values are dispersed
+throughout the data matrix.
+
+
+```{r, response pattern plot, include = TRUE}
+data2 %>%
+  ggmice::plot_pattern(rotate = TRUE)
+```
+
+Response patterns are also considered separately for *weight*, *height*, *BMI* as these are to be accounted
+for in subsequent imputations via updating the predictors matrices.
+
+```{r, response pattern plot 2, include = TRUE}
+data1 %>%
+  select(weight, height, bmi) %>%
+  md.pattern(rotate = TRUE, plot = FALSE) 
+```
+
+## Testing the response mechanisms
+
+The missing data mechanisms need to be investigated, as they serve as assumptions for application of the specific missing data methods. 
+Estimates are biased when assumptions are violated: e.g. deleting incomplete cases require MCAR, while multiple imputation methods assume MAR. 
+We test if missingness of the selected variables (vigorous/moderate exercise, drinking regularly, weight) is associated with the other measured variables.
+
+The essence of testing for MCAR is to compare the group with missing data to the group without missing data to assess if the other variables might have effect on missingness of the selected variables [@eekhout-2022].
+For the continuous variables present in the dataset a T-test is used to compare the means between the groups.
+For categorical variables Chi-square tests are used to compare the distribution over the categories between the groups.
+Due to the complete overlap in the missingness patterns of vigorous and moderate exercise, tests for one are valid for another.
+
+Univariate tests revealed significant differences between the groups (with and without missing datapoints) across a number of the measured variables.
+The results are presented in the table below: some reach statistical significance at the $\alpha$=0.05 level.
+No significant associated was found between the outcome variable, *pulse*, and the missingness in the variables of interest.
+
+We may assume the selected variables' data are not-MCAR (i.e. MAR, but MNAR cannot be ruled out).
+Chi-squared tests produced several warnings because many of the expected values will be very small. Some of the approximations of p-values may not be right because of this.
+
+```{r, t tests, include = TRUE}
+# T-Tests: if continuous variables have effect on missingness of selected variables (weight, vig/mod_rec, drink_reg)
+
+na_mar_w <- data.frame(
+  variable = character(),
+  test = character(),
+  mis.var = character(),
+  stat = numeric(), p = numeric()
+)
+
+na_mar_e <- data.frame(
+  variable = character(),
+  test = character(),
+  mis.var = character(),
+  stat = numeric(), p = numeric()
+)
+
+na_mar_d <- data.frame(
+  variable = character(),
+  test = character(),
+  mis.var = character(),
+  stat = numeric(), p = numeric()
+)
+
+expl1 <- (data1[, !names(data1) %in% c("weight", "bmi")])
+expl1 <- colnames(expl1[, sapply(expl1, is.numeric)])
+
+for (i in expl1) {
+  t_out1 <- t.test(data1[, i] ~ is.na(data1$weight))
+  na_mar_w <- na_mar_w %>%
+    add_row(
+      mis.var = "weight",
+      test = "t-test",
+      variable = i,
+      stat = round(t_out1$statistic, 2),
+      p = round(t_out1$p.value, 3)
+    )
+}
+
+expl2 <- (data1[, !names(data1) %in% c("vig_rec", "mod_rec")])
+expl2 <- colnames(expl2[, sapply(expl2, is.numeric)])
+
+for (i in expl2) {
+  t_out1 <- t.test(data1[, i] ~ is.na(data1$vig_rec))
+  na_mar_e <- na_mar_e %>%
+    add_row(
+      mis.var = "vig_rec/mod_rec",
+      test = "t-test",
+      variable = i,
+      stat = round(t_out1$statistic, 2),
+      p = round(t_out1$p.value, 3)
+    )
+}
+
+expl3 <- (data1[, !names(data1) %in% c("drink_regularly")])
+expl3 <- colnames(expl3[, sapply(expl3, is.numeric)])
+
+for (i in expl3) {
+  t_out1 <- t.test(data1[, i] ~ is.na(data1$drink_regularly))
+  na_mar_d <- na_mar_d %>%
+    add_row(
+      mis.var = "drink_regularly",
+      test = "t-test",
+      variable = i,
+      stat = round(t_out1$statistic, 2),
+      p = round(t_out1$p.value, 3)
+    )
+}
+```
+
+```{r, chi tests, include = TRUE}
+# chi-squared test: if categorical variables have effect on missingness of selected variables 
+
+expl1 <- (data1[, !names(data1) %in% c("weight", "bmi")])
+expl1 <- colnames(expl1[, sapply(expl1, is.factor)])
+
+for (i in expl1) {
+  chi_out1 <- chisq.test(data1[, i], is.na(data1$weight))
+  na_mar_w <- na_mar_w %>%
+    add_row(
+      mis.var = "weight",
+      test = "chi-sq",
+      variable = i,
+      stat = round(chi_out1$statistic, 2),
+      p = round(chi_out1$p.value, 3)
+    )
+}
+
+expl2 <- (data1[, !names(data1) %in% c("vig_rec", "mod_rec")])
+expl2 <- colnames(expl2[, sapply(expl2, is.factor)])
+
+for (i in expl2) {
+  chi_out1 <- chisq.test(data1[, i], is.na(data1$vig_rec))
+  na_mar_e <- na_mar_e %>%
+    add_row(
+      mis.var = "vig_rec/mod_rec",
+      test = "chi-sq",
+      variable = i,
+      stat = round(chi_out1$statistic, 2),
+      p = round(chi_out1$p.value, 3)
+    )
+}
+
+expl3 <- (data1[, !names(data1) %in% c("drink_regularly")])
+expl3 <- colnames(expl3[, sapply(expl3, is.factor)])
+
+for (i in expl3) {
+  chi_out1 <- chisq.test(data1[, i], is.na(data1$drink_regularly))
+  na_mar_d <- na_mar_d %>%
+    add_row(
+      mis.var = "drink_regularly",
+      test = "chi-sq",
+      variable = i,
+      stat = round(chi_out1$statistic, 2),
+      p = round(chi_out1$p.value, 3)
+    )
+}
+
+#merge for further printing,
+na_mar_merged <- na_mar_w %>%
+  dplyr::full_join(na_mar_e, 
+           by=c("variable","test")) %>%  
+  dplyr::full_join(na_mar_d,
+           by=c("variable","test"))
+
+# cumulative statistics table to test response mechanisms
+na_mar_merged[, !names(na_mar_merged) %in%
+  c("mis.var.x", "mis.var.y", "mis.var")] %>%
+  kbl(
+    booktabs = T,
+    caption = "Tests if other variables have effect on
+    missingness of the selected variables 
+    (weight, vigorous/moderate exercise, regular drinking)", 
+    align = "lrcccccc"
+    ) %>%
+  kable_styling(
+    full_width = T,
+    font_size = 10,
+    latex_options = "HOLD_position"
+  ) %>%
+  add_header_above(c(" " = 2, "Weight" = 2, 
+                     "Vig/Mod Exercise" = 2,
+                      "Drink Regularly" = 2)) %>%
+ # add_header_above(c(" " = 2, "Missing/Observed tested" = 6)) %>%
+  kableExtra::kable_classic()
+
+```
+
+Herewith, further analysis reveals how the groups of non-responders differ from the groups of responders, only concerning the variables for which significant differences between groups were found with the statistical tests.
+These will be explained in the sections below.
+
+### Weight
+
+The probability of missing data in *weight* is found to be associated with *age*, 3 out of 4 *blood pressure* *measures*, *sedentary time*, *vigorous work regime* and *walking or cycling*.
+Non-responders for *weight* overall are more likely to be more mature in terms of age, have higher blood pressure values, higher sedentary time values, less likely to have work involving vigorous-intensity activity and less likely to report regular walking or using a bicycle.
+
+### Vigorous/Moderate exercise
+
+The probability of missing data in both *vigorous* and *moderate exercise* is found to be associated with *age*, *sedentary time*, *ethnicity*, *education*, *vigorous* and *moderate work* questions, question on *unsafe sex per year* and reported *walking or cycling*.
+Non-responders for items on doing vigorous or moderate sports, exercise or recreational activities overall are more likely to be more mature in terms of age, have higher blood pressure values and higher sedentary time values, less likely to have work involving vigorous-intensity activity and less likely to report regular walking or using a bicycle.
+For variables with multiple levels the patterns of distribution are not so obvious.
+
+### Drinking regularly
+
+The probability of missing data in *regular drinking* question is found to be associated with *age*, all *blood pressure measures*, *reported days drinking*, *marital status*, two questions on *sexual life* and three questions relating to *depression features*.
+Younger people, with lower blood pressure measures are more likely not to report on drinking habits.
+Those who reported more days drinking are less likely to disclose drinking habits.
+For variables with multiple levels (*marital status*, two questions relating to *sexual life*) the patterns of distribution are not so obvious.
+Additionally, missingness in reporting drinking habits is associated with replies on several questions concerning depression features: feeling down, depressed or hopeless (*dep2*); trouble sleeping or sleeping too much (*dep3*); feeling bad about yourself (*dep6*).
+Those reporting higher values on these depression items were less likely to have missing data on the drinking regularly question.
+
+```{r, MAR1,include = TRUE}
+
+# used finalfit
+
+# choose the variables
+dependent1 <- "weight"
+explanatory1 <- colnames(data1[, c(
+  "age", "bp_sys1", "bp_dia1",
+  "bp_sys2", "bp_dia2", "time_sed",
+  "vig_work", "walk_cycle"
+)])
+data1 %>%
+  missing_compare(dependent1, explanatory1,
+    p_cont_para = "t.test", p_cat = "chisq",
+    na_include = TRUE
+  ) %>%
+  knitr::kable(
+    row.names = FALSE, align = c("l", "l", "r", "r", "r"),
+    caption = "Mean comparisons between values of responders (Not missing) and non-responders (Missing) on the Weight variable."
+  , format = "latex", booktabs =T) %>% 
+  kable_styling(latex_options = c("scale_down","HOLD_position")) 
+
+dependent2 <- "vig_rec"
+explanatory2 <- colnames(data1[, c(
+  "age", "ethnicity", "education",
+  "vig_work", "mod_work", "walk_cycle", 
+  "time_sed", "n_unsafe_sex_year"
+)])
+data1 %>%
+  missing_compare(dependent2, explanatory2,
+    p_cont_para = "t.test", p_cat = "chisq",
+    na_include = TRUE
+  ) %>%
+  knitr::kable(
+    row.names = FALSE, align = c("l", "l", "r", "r", "r"),
+    caption = "Mean comparisons between values of responders (Not missing) and non-responders (Missing) on the Vigorous and Moderate exercise variables."
+  , format = "latex", booktabs =T) %>% 
+  kable_styling(latex_options = c("scale_down","HOLD_position")) 
+
+# choose the variables
+dependent3 <- "drink_regularly"
+explanatory3 <- colnames(data1[, c(
+  "age", "marital", "bp_sys1", "bp_dia1",
+  "bp_sys2", "bp_dia2", "days_drinking", 
+  "n_sex_year", "n_unsafe_sex_year", 
+  "dep2", "dep3", "dep6"
+  )])
+  
+data1 %>%
+  missing_compare(dependent3, explanatory3,
+    p_cont_para = "t.test", p_cat = "chisq",
+    na_include = TRUE
+  ) %>%
+  knitr::kable(
+    row.names = FALSE, align = c("l", "l", "r", "r", "r"),
+    caption = "Mean comparisons between values of responders (Not missing) and non-responders (Missing) on Drink regularly."
+  , format = "latex", booktabs =T) %>% 
+  kable_styling(latex_options = c("scale_down", "HOLD_position")) 
+```
+
+
+
+```{r, mar plots1, fig.width = 5, fig.height = 6, include = TRUE}
+chist1 <- ggmice(data1, aes(age)) +
+  geom_histogram(fill = "white", show.legend = FALSE, bins = 30) +
+  facet_wrap(vars(is.na(vig_rec)), 
+             labeller = labeller(.default = label_both))+
+  theme(text = element_text(size=8))
+
+chist2 <- ggmice(data1, aes(age)) +
+  geom_histogram(fill = "white", show.legend = FALSE, bins = 30) + 
+  facet_wrap(vars(is.na(weight)), 
+             labeller = labeller(.default = label_both))+
+  theme(text = element_text(size=8))
+
+chist3 <- ggmice(data1, aes(age)) +
+  geom_histogram(fill = "white", show.legend = FALSE, bins = 30) +
+  facet_wrap(vars(is.na(drink_regularly)), 
+             labeller = labeller(.default = label_both))+
+  theme(text = element_text(size=8))
+
+chist4 <- ggmice(data1, aes(time_sed)) +
+  geom_histogram(fill = "white", show.legend = FALSE, bins = 30) +
+  facet_wrap(vars(is.na(vig_rec)), 
+             labeller = labeller(.default = label_both))+
+  theme(text = element_text(size=8))
+
+chist5 <- ggmice(data1, aes(time_sed)) +
+  geom_histogram(fill = "white", show.legend = FALSE, bins = 30) + 
+  facet_wrap(vars(is.na(weight)), 
+             labeller = labeller(.default = label_both)) +
+  theme(text = element_text(size=8))
+
+grid.arrange(chist1, chist2, chist3, chist4,  chist5, nrow = 3)
+```
+
+Some of the missing data relations are visualized in order to inspect though plots how our data (which might be either MAR or MNAR) depends on the measured variables.
+We have chosen only a few variables for visualization, e.g. *age* and *sedentary time*, which are significantly associated with missingness of most of the variables of analyses.
+
+Conditional histograms (included herein) of *age* for the cases with observed versus missing *weight*, *exercise modes* and *regular drinking* show that the distribution of *age* differs between the two groups.
+For *vigorous* and *moderate exercise*, the relationship is not very clear, although older people seem to be more likely to have missing values.
+Missingness on *weight* might be dependent on *age*, as there seem to be more missing values towards the higher end of the *age* range.
+On the contrary, younger respondents were more likely not to disclose the information on drinking regularly.
+The histograms further demonstrate that people reporting more sedentary time were more likely not to report weight and exercise regimes.
+
+
+```{r, mar plots2, fig.width = 3.5, fig.height = 3.5, include = TRUE}
+
+# another visual approach is a special box plot
+
+mplot1 <- marginplot(data2[c('weight', 'age')])
+
+mplot2 <- marginplot(data2[c('vig_rec', 'age')])
+
+
+```
+
+For missingness of *weight* as per *age*, the relationship is clearer on a boxplot for this pair of variables: red box plot on the left shows the distribution of age with weight missing, while the blue box plot shows the distribution of the observed data points.
+There is a difference in the reported *age* spread of people who had missing values on *weight* and those who did not, with more mature respondents having missing values on *weight* more often.
+For missingness in *exercise modes* the association with *age* is similar.
+
+
+Given the results above, we assumed MAR mechanism for the missing data on the variables of analyses. As MAR is less strict then MCAR, we can try to deal with missing data with multiple imputations.
+When variables are included that may later explain the missing data, a MAR assumption may become more plausible (as compared to MNAR).
+The original dataset contains `r ncol(data1)` measured variables, and thus we hope that by using those as auxiliary variables we can later use multiple imputation to solve our missing data problem (though MNAR still cannot be ruled out).
+E.g., auxiliary variables can be used as predictors in an imputation model to improve estimations.
+
+## Ad Hoc Methods
+
+### Deletion-Based Method
+
+Deletion-based methods, e.g. pairwise deletion in correlation analysis (Appendix A) and listwise deletion in regression modeling, are simple and allow to operate on complete cases, though lead to a reduced sample size and power, caused by the loss of incomplete cases, and larger standard errors.
+If the data is not MCAR as is the case with this dataset, the chance of having a biased dataset (even for simple statistics, like the mean) is substantial.
+Herewith, a listwise deletion is used in the initial linear regression model, which is compared to the models based on data after the imputations with different methods. If missingness on the predictors depends on the outcome variable in a regression model, complete case analysis will bias the model estimates.
+
+```{r, deletion method, include = TRUE}
+# subset only numeric vars, means imputed
+data_num2 <- data2 %>% select(where(is.numeric))
+
+# Pairwise deletions
+meanvar2 <- data.frame(
+  means = colMeans(data_num2, na.rm = TRUE),
+  medians = sapply(data_num2, na.rm = TRUE, median),
+  variances = sapply(data_num2, var, na.rm = TRUE)
+)
+meanvar2 %>%
+  kable(caption = "Means, medians and variances of selected variables in observed cases (pairwise deletion)", digits = 2, format = "latex", booktabs =T) %>%   kable_styling(latex_options = c("scale_down","HOLD_position")) 
+
+```
+
+```{r, deletion method2, include = TRUE}
+
+# Correlations:
+var_cor2 <- round(cor(data_num2, use = "pairwise.complete.obs"), 2)
+var_cor2 %>%
+  kable(caption = "Pearson Correlations, in observed cases (pairwise deletion)", format = "latex", booktabs =T) %>% 
+  kable_styling(latex_options = c("scale_down","HOLD_position")) 
+
+```
+
+### Mean substitution - continuous variables
+
+Mean imputation, a replacement based on mean of the available (non-missing) cases can be applied only on continuous data, e.g. *weight*.
+For categorical binary variables, mode imputation is further applied.
+For ordinal categorical variables, median imputation can also be tested.
+
+These methods maintain the sample size and are easy, but as the variability in the data is reduced, the standard deviations and variance estimates tend to be underestimated.
+The magnitude of the covariances and correlation also decreases by restricting the variability and this method often causes biased estimates, irrespective of the underlying missing data mechanism, even on MCAR data (@eekhout-2022).
+
+```{r, mean imputation continuous}
+mice_meanimp <- mice(data2, method = "mean", m = 1, maxit = 1)
+mice_meanimp$meth
+```
+
+Combination of biasing the central tendency toward the observed mean and reducing variability has propagated cascading biases throughout the regression model, as visualized below.
+
+```{r, mean imp cont plots, fig.width = 3, fig.height = 3, include = TRUE}
+ggmice(mice_meanimp, aes(weight, pulse)) + 
+  geom_point() + 
+  geom_smooth(method = "lm", se = FALSE)
+
+```
+
+The imputed values based on means (modes/medians) of the observed cases do not conform to linear associations in the data.
+So the biases are in all the parameters that represent some aspect of these linear associations (e.g., correlations, regression slopes, $R^2$), under any mechanism.
+
+Upon mean imputation of weight variable, as seen from the table below, the mean is preserved compared to the observed cases (missing values in *weight* are distributed across its range).
+The median values in the in the mean-imputed version decreased compared to observed data.
+To estimate true effect we need to compare with complete.
+The variability of the *weight* variable in the mean-imputed version is reduced (variance is 359.39 from 423.36 in the observed cases).
+This reduced variability potentially can affect the values of (attenuates) all correlations involving *weight*, as seen e.g. *pulse*-*weight* correlation reduced from 0.14 to 0.12 (only compared to the observed cases).
+Since *age*, *pulse* and *sedentary time* have no missing values in the observed set, there are no changes in the mean nor the variance.
+
+Mean imputation is a rough method, as it biases variances and correlations even if the data are MCAR and cannot produce unbiased parameter estimates even with MCAR data.
+
+```{r means corr}
+# Imputed means dataset
+data3 <- complete(mice_meanimp)
+
+# subset only numeric vars, means imputed
+data_num3 <- data3 %>% select(where(is.numeric))
+
+# For mean imputed data
+meanvar3 <- data.frame(
+  means = colMeans(data_num3, na.rm = TRUE),
+  medians = sapply(data_num3, na.rm = TRUE, median),
+  variances = sapply(data_num3, var, na.rm = TRUE)
+)
+meanvar3 %>%
+  kable(caption = "Means, medians and variances of selected variables,  mean imputation applied", digits = 2, format = "latex", booktabs = T) %>%
+  kable_styling(latex_options = c("scale_down", "Hold_position"))
+
+# Correlations:
+var_cor3 <- round(cor(data_num3, use = "pairwise.complete.obs"), 2)
+var_cor3 %>%
+  kable(caption = "Pearson Correlations, on cases with mean imputation", 
+        format = "latex", booktabs = T) %>%
+  kable_styling(latex_options = c("scale_down", "Hold_position"))
+```
+
+### Mode imputation - categorical (binary) variables
+
+Mode imputation allows replacing missing values of a categorical variable by the mode of non-missing cases of that variable.
+Upon performing this imputation on the binary variables of interest (*vig_rec*, *mod_rec* modes - 'yes', , *drink_regularly* with mode - 'no'; distribution as per levels is presented in the section Dataset and Descriptives), the results were visualized with bar-plots.
+The green bars reflect distributions before imputation, and a perfect imputation method would reproduce the green bars.
+However, after the application of mode imputation, the imputed vector (orange bars) differs a lot.
+While 1 category ('no' for *vigorous* and *moderate* *exercise*, 'yes' for *drinking* *regularly*) is highly over-represented, the other one is underrepresented.
+Mode imputation can heavily undermine the quality of data and is a rough method.
+
+```{r, mean imp cont binary, include = TRUE}
+# Create the function to get mode
+getmode <- function(v) {
+   uniqv <- unique(v)
+   uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+
+# use vars in new dataset data3 which stores data after imputation
+# Impute by mode
+data3$vig_rec[is.na(data3$vig_rec)] <- getmode(data2$vig_rec) 
+data3$mod_rec[is.na(data3$mod_rec)] <- getmode(data2$mod_rec) 
+data3$drink_regularly[is.na(data3$drink_regularly)] <- 
+  getmode(data2$drink_regularly) 
+
+plot_distr <- function(v_inc, v_imp) {
+missingness <- c(rep("Observed (incomplete)", 2), rep("Post Mode Imputation", 2)) 
+
+# Pre/post imputation
+Category <- as.factor(rep(names(table(v_inc)), 2))  # Categories
+Count <- c(as.numeric(table(v_inc)), 
+           as.numeric(table(v_imp)))     # Count of categories
+ 
+data_barplot <- data.frame(missingness, Category, Count)   # Combine for plot
+ 
+ggplot(data_barplot, aes(Category, Count, fill = missingness)) +  # Create plot
+  geom_bar(stat = "identity", position = "dodge") + 
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal() +
+  theme(legend.title = element_blank())
+}
+
+pd1 <- plot_distr(data2$vig_rec, data3$vig_rec) + 
+  ggtitle("Vigorous Exercise")
+pd2 <- plot_distr(data2$mod_rec, data3$mod_rec) + 
+  ggtitle("Moderate Exercise")
+pd3 <- plot_distr(data2$drink_regularly, data3$drink_regularly) + 
+  ggtitle("Drink Regularly")
+grid.arrange(pd1, pd2, pd3, ncol = 1)
+
+```
+
+### Regression imputation
+
+Regression imputation can to some extent improve the poor performance of mean (mode) substitution.
+The missing values in continuous variables were replaced with conditional means predicted from a linear regression equation, and categorical values are predicted from logistic regression model based on probabilistic framework of maximum likelihood estimation.
+The relevant imputation methods ('norm', 'logreg') were used for single imputation.
+
+The complete observations are used to predict the values of the missing points.
+The default predictor matrices were used, thus including all the predictors except the variable in which imputation is performed itself.
+For a later improvement, it is more reasonable to retain all the variables to be analyzed in the model plus variables that are related to the non-response of the specific variable [@van-buuren-2018, Ch. 6.3.2].
+
+The imputed values (under simple linear regressions) fall directly on a regression line with a nonzero slope, so correlation of 1 between the predictors and the missing outcome variable is implied.
+Some methods also take into account noise: e.g.
+Bayesian linear regression which is tested later within stochastic regression approach.
+
+```{r, regression imp, include = TRUE}
+
+# initial dataset with all measured variables is used
+
+imp0 <- mice(data1, maxit = 0, 
+             defaultMethod = c("norm.predict", 'logreg', 'polyreg', 'polr'))
+meth <- imp0$meth
+#meth
+imp_single <- mice(data1, method = meth,
+            maxit = 1, m = 1,
+            seed = 1234,
+            printFlag = FALSE)
+
+#retrieve the imputation data
+data_complete1 = complete(imp_single, action = 1)
+
+#retain the same variables as in selected dataset for further comparison
+data_complete1A <- data_complete1 %>% 
+  select (age, sex, weight, household_income, 
+          pulse, vig_rec, mod_rec, 
+          drink_regularly, time_sed)
+```
+
+### Imputation diagnostics
+
+The values imputed by the mean/mode imputation can be compared with those imputed by single imputation via regressions.
+For the *weight* variable the difference is obvious between all the predicted by regression and mean values (76).
+For *vig_rec* and *mod_rec* there is considerable amount of difference between values predicted by logistic regression and mode imputation (28 of 101, 55 of 101 imputations).
+For *drink_regularly* 16 out of 76 imputed values differ between mode substitution and logistic regression imputation.
+
+```{r, diff}
+# compare to set with mean and mode imputations 
+# note that data3 includes only selected vars
+diffdf(data_complete1A, data3)
+
+```
+
+Under MAR, unbiased estimates of regression coefficients are produced as the dependent variable (*pulse*) is fully observed, although the p-values are too optimistic and the confidence intervals too short.
+It is possible to get a good approximation to the (unknown) true data if explained variance is high.
+Regression imputation inflates the correlations (opposing mean substitution), however, the variances and covariances are systematically underestimated.
+The linear regression imputation for *weight* (the only continuous variable of interest, with missing values) had no influence on the mean (compared to the observed cases), as the (conditional) mean information is maintained through the imputation process.
+Variability of regression-imputed *weight* is attenuated compared to observed cases (400.84 from 423.36), but not that much as with mean substitution (359.39).
+By over-representing perfect linear associations in the imputed data, any correlations involving variables with missing values are inflated.
+We visualized the distributions of *weight*: observed, mean-imputed, regression-imputed with histograms and boxplots.
+It could be noticed that mean-imputed *weight* has the peak at mean value (orange), while there are overall similar distributions of the observed (incomplete, blue) and regression-imputed (dark-red) *weight* variables.
+Less variability in regression-imputed variable (with means kept close) are revealed in the boxplot.
+
+```{r, include = TRUE, fig.width = 4, fig.height = 4}
+
+# analyse differences for continuous vars (weight) imputation
+# subset only numeric vars n imputed by regression
+data_num_complete1A <- data_complete1A %>% select(where(is.numeric)) 
+
+# For single linear regression imputation
+meanvar4 <- data.frame(means = colMeans(data_num_complete1A, na.rm = TRUE),
+       medians = sapply(data_num_complete1A, na.rm = TRUE, median),
+       variances = sapply(data_num_complete1A, var, na.rm = TRUE))
+meanvar4 %>% 
+  kable(caption = 'Means, medians and variances of selected variables, 
+        after single regression imputation', digits = 2, format = "latex", booktabs =T) %>% 
+  kable_styling(latex_options = c("scale_down","HOLD_position")) 
+
+# Correlations: 
+var_cor4 <- round(cor(data_num_complete1A, use = "pairwise.complete.obs"),2)
+var_cor4 %>% 
+  kable(caption = "Pearson Correlations, after single-regression imputation", format = "latex", booktabs =T) %>% 
+  kable_styling(latex_options = c("scale_down","HOLD_position")) 
+
+# paired data plot
+plot_weight <-  
+  ggplot() + 
+  geom_histogram(data=data2, aes(x = weight, 
+                     y = ..density..), 
+                 alpha = 0.1, colour = "blue") + 
+  geom_histogram(data=data3, aes(x = weight, 
+                     y = ..density..), 
+                 alpha = 0.1, colour = "orange") + 
+  geom_histogram(data=data_num_complete1A, aes(x = weight, 
+                     y = ..density..), 
+                 alpha = 0.1, colour = "darkred") + 
+  geom_density(data=data2, aes(x = weight), 
+               alpha = 4, colour = "blue", size =1) + 
+  geom_density(data=data_num_complete1A, aes(x = weight), 
+               alpha = 4, colour = "orange", size =1) + 
+  geom_density(data=data_complete1A, aes(x = weight), 
+               alpha = 4, colour = "darkred", linetype ="dashed", size =1) +
+  theme_minimal() +
+  labs (title = "Weight observed incomplete (blue), \nimputed mean (orange), imputed predicted (dark-red)",
+          x = "weight") +
+  theme(plot.title=element_text(size=10))
+plot_weight
+```
+
+```{r boxplot obs imp, include = TRUE, fig.width = 4, fig.height = 4}
+## boxplot to examine the distributions of observed and imputed data
+ggmice(imp_single , aes(x = .imp , y = weight)) + 
+  geom_boxplot(width = 0.5, size = 1, alpha = 0.75, outlier.shape = NA) +
+  geom_jitter(height = 0, width = 0.25) +
+  labs(x = "Imputation number")
+```
+
+A bivariate problem (e.g., *pulse*-*weight* association) is visualized to see why regression imputation is problematic, as the slopes differ (biased).
+We fit simple imputation based on only linear relation between *weight* and *pulse*, *sedentary* *time* as predictors (both with no missing values).
+This way we reveal systematicity in imputation and inflated correlation (correlation *pulse*-*weight* inflated from r = 0.138 to 0.151).
+This is not evident if we visualize the regression imputations based on all predictors in the set against the dependent - e.g. *weight* variable with missing values.
+
+```{r imp simple1, fig.width = 4, fig.height = 4, include = TRUE}
+
+
+imp_simple1 <- mice(data1 [, c('weight', 'pulse', 'time_sed')], 
+            meth = 'norm.predict',
+            maxit = 1, m = 1,
+            seed = 1234,
+            printFlag = FALSE)
+
+cor_obs <- round(cor(data1[, c('weight', 'pulse', 'time_sed')], 
+                     use = "pairwise.complete.obs"), 3)
+cor_obs %>% 
+  kable(caption = "Correlations in observed data, pairwise", format = "latex", booktabs =T) %>% 
+  kable_styling(latex_options = c("scale_down","HOLD_position")) 
+
+#retrieve the imputation data
+data_c_simple = complete(imp_simple1, action = 1)
+
+cor_lri <- round(cor(data_c_simple), 3)
+cor_lri %>% 
+  kable(caption = "Correlations after linear regression imputation, for weight", format = "latex", booktabs =T) %>% 
+  kable_styling(latex_options = c("scale_down","HOLD_position")) 
+
+#  visualize a bivariate problem, see why regression imputation problematic
+ggmice(imp_simple1, aes(weight, pulse)) + 
+  geom_point() + 
+  geom_smooth(method = "lm", se = FALSE)
+
+```
+
+Bar-plots are used to assess the logistic regression imputations performed on the categorical variables of interest.
+Each bar represents proportion of the data in the category given on the x-axis in one (imputed) dataset.
+The green bars show the distribution of the original (incomplete) data.
+The blue bars show the distribution in the imputed values from each of the models (we have a single model in this case) imputed dataset.
+Given the green bars are approximately as high as the blue ones, the distribution of the categorical variable in the imputed values is similar to the distribution in the observed data.
+For *drink_regularly* and *moderate* *exercise* variables the distribution of yes/no answers becomes very different, while for *vigorous* the distribution is nearly preserved.
+Marginal distributions are compared, but the MAR assumption is that the incomplete cases (missing data) have the same distribution as the observed cases conditional on the other variables included in the dataset.
+
+```{r, NErler, include = TRUE}
+
+# the tutorial ad function found at 
+# https://gist.github.com/NErler/0d00375da460dd33839b98faeee2fdab
+
+# Plot for all categorical variables
+propplot <- function(x, formula, facet = "wrap", ...) {
+  library(ggplot2)
+
+  cd <- data.frame(mice::complete(x, "long", include = TRUE))
+  cd$.imp <- factor(cd$.imp)
+
+  r <- as.data.frame(is.na(x$data))
+
+  impcat <- x$meth != "" & sapply(x$data, is.factor)
+  vnames <- names(impcat)[impcat]
+
+  if (missing(formula)) {
+    formula <- as.formula(paste(paste(vnames,
+      collapse = "+",
+      sep = ""
+    ), "~1", sep = ""))
+  }
+
+  tmsx <- terms(formula[-3], data = x$data)
+  xnames <- attr(tmsx, "term.labels")
+  xnames <- xnames[xnames %in% vnames]
+
+  if (paste(formula[3]) != "1") {
+    wvars <- gsub("[[:space:]]*\\|[[:print:]]*", "", paste(formula)[3])
+    # wvars <- all.vars(as.formula(paste("~", wvars)))
+    wvars <- attr(terms(as.formula(paste("~", wvars))), "term.labels")
+    if (grepl("\\|", formula[3])) {
+      svars <- gsub("[[:print:]]*\\|[[:space:]]*", "", paste(formula)[3])
+      svars <- all.vars(as.formula(paste("~", svars)))
+    } else {
+      svars <- ".imp"
+    }
+  } else {
+    wvars <- NULL
+    svars <- ".imp"
+  }
+
+  for (i in seq_along(xnames)) {
+    xvar <- xnames[i]
+    select <- cd$.imp != 0 & !r[, xvar]
+    cd[select, xvar] <- NA
+  }
+
+  for (i in which(!wvars %in% names(cd))) {
+    cd[, wvars[i]] <- with(cd, eval(parse(text = wvars[i])))
+  }
+
+  meltDF <- reshape2::melt(cd[, c(wvars, svars, xnames)],
+    id.vars = c(wvars, svars)
+  )
+  meltDF <- meltDF[!is.na(meltDF$value), ]
+
+  wvars <- if (!is.null(wvars)) paste0("`", wvars, "`")
+
+  a <- plyr::ddply(meltDF, c(wvars, svars, "variable", "value"),
+    plyr::summarize,
+    count = length(value)
+  )
+  b <- plyr::ddply(meltDF, c(wvars, svars, "variable"), plyr::summarize,
+    tot = length(value)
+  )
+  mdf <- merge(a, b)
+  mdf$prop <- mdf$count / mdf$tot
+
+  plotDF <- merge(unique(meltDF), mdf)
+  plotDF$value <- factor(plotDF$value,
+    levels = unique(unlist(lapply(x$data[, xnames], levels))),
+    ordered = T
+  )
+
+  p <- ggplot(plotDF, aes(x = value, fill = get(svars), y = prop)) +
+    geom_bar(position = "dodge", stat = "identity") +
+    theme_minimal() +
+    theme(legend.position = "bottom", ...) +
+    ylab("proportion") +
+    scale_fill_manual(
+      name = "",
+      values = c(
+        "yellowgreen",
+        colorRampPalette(
+          RColorBrewer::brewer.pal(9, "Blues")
+        )(x$m + 3)[1:x$m + 3]
+      )
+    ) +
+    guides(fill = guide_legend(nrow = 1))
+
+  if (facet == "wrap") {
+    if (length(xnames) > 1) {
+      print(p + facet_wrap(c("variable", wvars), scales = "free"))
+    } else {
+      if (is.null(wvars)) {
+        print(p)
+      } else {
+        print(p + facet_wrap(wvars, scales = "free"))
+      }
+    }
+  }
+
+  if (facet == "grid") {
+    if (!is.null(wvars)) {
+      print(p + facet_grid(paste(paste(wvars, collapse = "+"), "~ variable"),
+        scales = "free"
+      ))
+    }
+  }
+}
+
+propplot(imp_single)
+
+```
+
+When comparing distributions of categorical variables after mode imputation and logistical regression, as seen on the bar-plots below, it could be observed that these are quite similar for *drink_regularly*.
+As noted above only 17 of 76 imputed values in *drink_regularly* differed between these imputation methods.
+For *vigorous* and *moderate* *exercise* after mode-imputation compared to logistic-regression imputation category ('no') is highly over-represented, the other one ('yes') is underrepresented.
+
+```{r, include = TRUE}
+
+## compare imp by mice and data3 (with mean and mode imputations)
+## e.g. using prev.function for pre/post imputation but modified axis
+plot_distr2 <- function(v_inc, v_imp) {
+ missingness <- c(rep("Regression imputation", 2), rep("Mode Imputation", 2)) 
+ Category <- as.factor(rep(names(table(v_inc)), 2))  # Categories
+ Count <- c(as.numeric(table(v_inc)), 
+           as.numeric(table(v_imp)))     # Count of categories
+ 
+data_barplot <- data.frame(missingness, Category, Count)   # Combine for plot
+ 
+ggplot(data_barplot, aes(Category, Count, fill = missingness)) +  # Create plot
+  geom_bar(stat = "identity", position = "dodge") + 
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal() +
+  theme(legend.title = element_blank()) }
+
+pd3 <- plot_distr2(data_complete1A$vig_rec, data3$vig_rec) + 
+  ggtitle("Vigorous")
+pd4 <- plot_distr2(data_complete1A$mod_rec, data3$mod_rec) + 
+  ggtitle("Moderate Exercise")
+pd5 <- plot_distr2(data_complete1A$drink_regularly, data3$drink_regularly)+ 
+  ggtitle("Drink Regularly")
+
+grid.arrange(pd3, pd4, pd5, ncol = 1)
+```
+
+### Comparison Listwise Deletion, Mean/Mode Imputation, Linear Regression
+
+Linear regression models were fitted to predict *pulse* from *age*, *weight*, *sex*, *household_income*, *drink_regularly*, *vig_rec*, *mod_rec*, and *time_sed*.
+Here we compare the regression models using the different data sets we imputed.
+The linear regression tables for each method can be found in Appendix D.
+
+As long the missingness in the selected predictors does not depend on the outcome (*pulse*) as confirmed before with t-tests, estimates for regression under listwise deletion are unbiased (MAR) [@nguyen2020guide, Ch. 11.2.1]. The loss of statistical power remains a major drawback in all situations. 
+Mean/mode imputation leads to biased estimates and $R^2$ even for MCAR (also for MAR, assumed here), as visualized above (Mean imputation section).
+Regression imputation leads to biased regression slopes and to inflating measures of linear association (hold even for MCAR), unless the missing values are found only in dependent variable (which is not the case here).
+Regression weights are unbiased under MAR if the factors that influence the missingness are part of the regression model [@van-buuren-2018, Ch.1.3.4].
+But we cannot exclude that data is MNAR and missingness is associated with some undiscovered factors.
+
+Adjusted $R^2$ are very slightly higher in the models based on mean/mode imputed data and regression-imputed data. Some coefficients changed the sign: e.g. in the model based on regression-imputed data the sign changed to negative for *vig_rec*, compared to positive in the model based on data after the mean/mode imputations, close to zero in the model based on complete cases.
+In all models only the predictors *weight* and *sex* were significantly associated with *pulse*.
+
+```{r, bonked, include = TRUE}
+
+# using only the observed data - listwise deletion
+fit0 <- lm(pulse ~ ., data = data2)
+
+# using the data with mean-imputed weight and mode-imputed vig_rec, mod_rec, drink_reg
+fit1 <- lm(pulse ~ ., data = data3)
+
+# using the data with regressions imputed weight (linear norm.predict) and vig_rec, mod_rec, drink_reg (logreg)
+fit2 <- lm(pulse ~ ., data = data_complete1A)
+
+
+#library(jtools) # Load jtools
+plot_summs(fit0, fit1, fit2, 
+          model.names = c("Listwise Deletion", "Mean/Mode imputed", 
+                          "Single regression-imputed"))
+```
+
+### Implications of using ad hoc methods
+
+Upon examining patterns of missingness and response mechanisms (assumed the data is MAR after statistical tests), the ad hoc methods were applied to treat the missing values in the variables of interest (continuous - *weight*; categorical - *vig_rec*, *mod_rec*, *drink_regularly*).
+
+These methods included deletion, mean and mode imputation and single regression imputation (linear regression, logistic regression).
+They create a single 'complete' dataset, which is analysed as if it were the fully observed data.
+Unless certain, fairly strong, assumptions are true, these imputation methods are inefficient, do not properly reflect statistical uncertainty and have disadvantages as discussed above: e.g. improper estimates in measures of association, reduced variability, biased regression estimates and misleading inferences.
+
+## Imputation Methods
+
+### Simple Imputation (stochastic regression)
+
+```{r, stoch mod single}
+
+stoch <- mice(data1, method = "norm.nob", maxit=0)
+stoch <- stoch$method
+stoch[c("vig_rec", "mod_rec", "drink_regularly")] <- "logreg"
+stoch["n_unsafe_sex_year"] <- "polr"
+simp <- mice(data1, method = stoch, maxit = 1, m = 1, 
+             print = F, seed = 1234)
+
+```
+
+To improve on our previous imputation, we performed a stochastic regression imputation, where uncertainty is accounted for by adding extra error variance to the predicted values from the linear regression model.
+But induced noise is limited to symmetric and constant error, the uncertainty of the predictions is not taken into account (variance and standard error remain underestimated).
+As stochastic regression cannot impute the missing data for factor variables, we let it impute only the continuous variables.
+For the binary variables we use logistic regression, and for the categorical variable we used a proportional odds model.
+
+
+
+```{r stoch results,  include = TRUE, fig.width = 4, fig.height = 4}
+## simpler variant to assess the distribution of imputed values
+imp_simple2 <- mice(data1 [, c('weight', 'pulse', 'time_sed')], 
+            meth = 'norm.nob',
+            maxit = 1, m = 1,
+            seed = 1234,
+            printFlag = FALSE)
+
+#retrieve the imputation data
+data_c_simple2 = complete(imp_simple2, action = 1)
+
+cor_st <- round(cor(data_c_simple2), 3)
+cor_st %>% 
+  kable(caption = "Correlations after stochastic linear regression imputation, for weight", format = "latex", booktabs =T) %>% 
+  kable_styling(latex_options = c("scale_down","HOLD_position")) 
+
+#  visualize a bivariate problem, see why regression imputation problematic
+ggmice(imp_simple2, aes(weight, pulse)) + 
+  geom_point() + 
+  geom_smooth(method = "lm", se = FALSE)
+
+```
+
+A bivariate visualization allows examining that stochastic regression imputation results in higher variability of imputed values (added error variance) and slope close to the one based on complete cases.
+
+We fit simple imputation based on only linear relation between *weight* and *pulse* and *sedentary* *time* as predictors (both with no missing values).
+Unlike in linear regression correlation *pulse*-*weight* didn't inflate (r = 0.136).
+
+### Multiple Imputation (default settings)
+
+```{r, MI}
+mimp <- mice(data1, maxit = 0, print = F)
+meth1 <- mimp$method
+meth1["n_unsafe_sex_year"] <- "polr"
+meth1
+mimp <- mice(data1, method = meth1, print = F, seed = 834894)
+```
+
+
+
+To improve our analysis, more flexible and robust multiple imputation methods were employed, allowing to reduce bias, and increase precision, statistical power. 
+
+We first use the default `mice` imputation method and analuze the results as a basis for improvement, e.g. then use passive imputation to perform multiple imputations on our data. Then, we pool and analyze the data, and then compare the effect of the selected predictors on *pulse*. 
+
+As a starting point we performed a simple multiple imputation, using the default settings of `mice`.
+Using the default settings, `mice` uses predictive mean matching for the numeric variables, logistic regression for the binary variables, and polytomous logistic regression for the nominal variables.
+As polytomous logistic regression should only be used for unordered variables and our variable *n_unsafe_sex_year* is ordered, we changed it to a proportional odds model.
+
+### Evaluate Convergence
+
+We can see that the model has not yet converged.
+The lines are not intermingling in all of the variables, and there seem to be trends forming in some of the variables, for example *dep3* and *dep6*.
+We then increased the number of iterations to 25 (illustrated on the traceplots).
+
+The model still has not converged, as shown by the lack of intermingling lines of *weight* and *height*`.` *BMI* is also not intermingling, but this can be explained by *BMI* being a derived variable which should be passively imputed.
+We tested for multicollinearity in our variables to understand whether that might be causing the non-convergence.
+
+```{r, VIF, include = TRUE}
+model <- lm(pulse ~ ., data1)
+vif_df <- ols_vif_tol(model)
+vif_df %>%
+  arrange(desc(VIF)) %>%
+  filter(VIF > 10) %>%
+  kable(caption = "VIF diagnostics", digits = 2, booktabs = T) %>%
+  kable_styling(latex_options = c("scale_down", "HOLD_position"))
+```
+
+```{r}
+plot(mimp, layout = c(2, 10))
+```
+
+```{r, include=TRUE, out.height="80%"}
+mimp <- mice.mids(mimp, maxit = 20, print = FALSE)
+plot(mimp, layout = c(2,5))
+```
+
+Trace plots reveal issues with  *weight*, *height* and *BMI* convergence: there trends pointing to feedback problems and chains don't mix well, i.e., there is more variation between the chains than within each chain. These are signs that there is correlation or identification problems between these variables and some other variables, which need to be accounted for modifying predictor matrix.
+
+Multicollinearity seems to be a problem in our data set, as shown by the high VIF values of *weight*, *height* and *BMI*.
+*BMI*, *height* and *weight* are naturally expected to strongly correlate with each other.
+*Household income* also shows concerning VIF values, which should be examined in further improvements to the model.
+In a later model, we can improve this by changing the predictor matrix.
+
+While continuing using the default settings, we attempted to remedy the problem by running more imputations (another 75), and the model has converged.
+
+```{r, include=TRUE}
+densityplot(mimp)
+```
+
+```{r, include=TRUE, fig.width=3.5, fig.height=3.5}
+
+# check for weight by sex
+densityplot(mimp, ~weight|sex,
+layout = c(1, 2))
+
+```
+
+The density plots of the continuous imputed variables show that the imputed data are plausible.
+The imputed data roughly follow the observed data distribution, with some differences as to the height of the peak, e.g. for *weight*.
+In some cases, differences in distributions can be explained by strata in the data, though here, e.g. *sex* does not fully explain the difference in observed and imputed values of *weight*.
+Especially for the depression questions *dep2*, *dep3*, *dep5* and *dep6* the peaks do not align with the observed datapoints.
+However, the imputed values are not implausible and thus can be used in the analysis.
+
+For selected categorical variables of interest we include the analysis of the imputated values within the final MI imputation section.
+
+### Multiple Imputation (improved)
+
+When thinking of improving multiple imputation, we need to work out the strategy of including variables to serve as predictors in the series of models for each incomplete variable.  
+The imputation step must include all variables and effects that are part of the subsequent analyses (the variables in the RQ question).
+An inclusive strategy also incorporates auxiliary variables into the missing data handling process. Good auxiliary variables are either correlates of incomplete variables or correlates of missingness; do not have many missing values themselves and are (mostly) observed when the incomplete variable of interest is missing. 
+@van-buuren-2018[Ch. 6.3.2] provides some practical advice, noting that using a large number of auxiliary variables can lead to convergence problems. On the other hand, when number of variables in the dataset is manageable from computational perspective, it is reasonable and beneficial to include as many variables as are available (34 in the given dataset) and only account for derived variables separately. Including as many predictors as possible tends to make the MAR assumption more plausible and reduce the need for special adjustments for MNAR. The rationale behind such approach: using every bit of the available information yields multiple imputations that have minimal bias while maximal efficiency. This approach is applied further with Multiple Imputation.
+
+Upon analysis of distributions (Appendix B) and noting the size of the dataset (not very small), predictive mean matching (pmm) was chosen for all the variables except categorical, as this semi-parametric approach to imputation suits for settings where the normal distribution is not a good choice for the predictive distribution. Also among incomplete variables are several depression items which are treated as continuous variables, but are ordinal scales,
+for which 'pmm' is also applicable.
+The idea behind 'pmm' is to find cases in the observed data similar to the cases with missing values, via process when the predicted values of complete and incomplete cases are compared and fill in the missing value with the observed value from one of those cases (random selection of donor, from donor cases with the smallest absolute difference). This way no implausible values are produced.
+We have further adjusted method for stochastic regression for *bp_dia2* (has close to normal distribution, Appendix B), in an attempt to improve distribution, to be closer to observed values. The results did not change upon visual inspection.
+We have opted for logistic regression for the binary variables, and polytomous logistic regression for the nominal variables.
+As polytomous logistic regression should only be used for unordered variables and our variable *n_unsafe_sex_year* is ordered, we changed it to a proportional odds model.
+
+As imputed values in one variable depend on the imputed values of the other
+variables (Gibbs sampling). The iterations are increased until convergence,  when the sampling distribution does not change any more.
+
+
+```{r, MI impr1, include = TRUE}
+
+mimp0 <- mice(data1, maxit = 0, print = F)
+meth2 <- mimp0$method
+meth2["n_unsafe_sex_year"] <- "polr"
+#meth2["vig_rec"] <- "pmm"
+#meth2["mod_rec"] <- "pmm"
+#meth2["drink_regularly"] <- "pmm"
+meth2
+
+```
+It is acknowledged that some variables are functions of other variables, e.g. $BMI = \frac{weight}{height^{2}}$ and need to be treated separately.
+*BMI* values if imputed directly, may be inconsistent with the (imputed) values of *weight* and *height*. Moreover, if some components of a *BMI* variable are observed that information can be used to reduce uncertainty. Here we have 62 + 80 = 141 cases in which either *weight* or *height* is observed.
+
+We would like to impute *weight* or *height*  separately and calculate *BMI* from the (imputed) values of the two variables. 
+On one hand, if *BMI* is not a relevant predictor in other imputation models, it might be excluded from the imputation and re-calculated afterwards.
+With no confidence on this issue, for *BMI* to be used as predictor in the imputation, it has to be calculated in each iteration with passive imputation. With updating the imputation method we specified a formula and also modified the predictor matrix to prevent the feedback (from *BMI* into imputation of weight and height, leading to circularity issues).
+
+Besides, when passively imputed (post-processed) values of a variable depend on other variables, the sequence the variables are imputed may matter to obtain consistent values. E.g. if *BMI* is passively imputed (calculated) before the new imputations for *weight* and *height* are drawn, the resulting *BMI* values , will match *weight* and *height*  from the previous iteration. 
+By default `mice` imputes in the order of the columns in data  (argument `visitSequence`), which in our case is acceptable. Further, given non-monotone missing data (Appendix C) there is no sequence without conditioning on unobserved values. 
+
+To avoid problems in the imputation models, we have revisited collinearity issues (in each iteration linearly dependent variables are removed).
+Since *BMI* depends on *weight*, and the two variables are highly correlated (r=0.87) it may be reasonable not to use them simultaneously as the predictors in the other imputation models. 
+Blood pressure measurements (1) are highly correlated to subsequent measurements (2), e.g. *bp_sys1* is highly correlated with *bp_sys2* (r = 0.89, see Appendix A), and the 2nd measurements have considerable proportions of missing values (20% fully overlapping, as revealed in Appendix C). The 2nd measurements can be excluded as the predictors in the other imputation models.
+Based on these considerations, we have processed further modification of the predictor matrix.
+
+Based on the percentage of missing data (9.14%) we used 5 imputations (m=5) as a starting point for initial exploration. We have then tested the process with 10 imputations, which needs more computational power and took longer. The results didn't bring much in terms of convergence and change in linear regression estimates for the analysis of RQ. The only difference was very a slight increase in variability (SD) of continuous variables (e.g. *weight*). Thus we have kept 5 imputations. 
+In the literature [@heymans-2019; @van-buuren-2018, Ch. 2.8 for review of studies] the number of imputations are recommended to be further increased. @van-buuren-2018 points out that MI is able to work adequately with low m, since it enlarges the between-imputation variance by factor 1/m [@van-buuren-2018, Ch. 2.8]. He further recommends 3-5 imputations for moderate amounts of missing values, since the substantive conclusions are unlikely to change with further increase of m.
+25 iterations were applied as an initial step, further subject to convergence inspection. Check of the logged events didn't reveal any issues.
+
+
+```{r, passive BMI, include = TRUE}
+table(wgt_missing = is.na(data1$weight),
+hgt_missing = is.na(data1$height))
+
+meth2["bmi"] <- "~I(weight/(height/100)^2)" # formula, to impute BMI
+meth2["bp_dia2"] <- "norm.nob"
+
+# modify predictorMatrix
+pred2 <- mimp0$predictorMatrix
+pred2 [c("weight", "height"), "bmi"] <- 0 # prevent the feedback
+
+pred2 [, c("bp_sys2", "bp_dia2")] <- 0 # not to be used as predictors
+
+```
+
+
+```{r, passive BMI 2, fig.width=7, fig.height=7, include = TRUE}
+
+#Plot the predictor matrix and methods vector.
+ggmice::plot_pred(pred2, method = meth2, rotate = TRUE)
+
+```
+
+
+```{r, MI impr2}
+
+## perform imputation
+
+mimp1 <- mice(data1, method = meth2, predictorMatrix = pred2,
+              m = 5, maxit = 25, 
+              print = F, seed = 1234)
+
+#logged events
+head(mimp1$loggedEvents)
+
+```
+
+### Evaluate convergence of the improved MI 
+
+In order to assess the validity and quality of the imputed data it is important to assess both the convergence and plausibility. Convergence refers to the stability of the imputation and how much the imputed values have stabilized. On the other hand, plausibility refers to how reasonable the imputed values appear. 
+
+```{r, include=TRUE, out.height="80%"}
+
+plot(mimp1, layout = c(2,5))
+
+```
+
+With adjusted predictor matrix and method (including passive imputation), the convergence was reached with 5 imputations, 25 iterations.
+Convergence plots reveal the change in imputation estimates as the number of imputations increase. We look at the stabilization, plateau, and fluctuations of the imputation estimates in the plot, absence of strong trends and good intermingling of the lines. 
+
+```{r, dens plot MI11, include=TRUE}
+densityplot(mimp1)
+
+```
+
+
+```{r, density mi2, fig.width=4, fig.height=4, include = TRUE}
+# check for bp_dia2 by sex
+densityplot(mimp1, ~bp_dia2|sex,
+layout = c(1, 2))
+```
+```{r, include=TRUE, fig.width = 3, fig.height = 3}
+# Checking deterministic definition of BMI is maintained:
+xyplot(mimp1, bmi ~ I(weight / (height / 100)^2), ylab="Imputed BMI", xlab="Calculated BMI")
+```
+
+Plausibility is assessed by examining a density plots (boxplots for categorical), which visualize the distribution of the imputed values vs the observed data. If the imputed values are plausible, then the shape, center, and spread of the density curves should be similar between the imputed values and the observed values.
+We have further ensured visually the the deterministic definition of BMI is maintained in the imputed data.
+
+The density plots of the continuous imputed variables show that the imputed data are plausible. The imputed data roughly follow the observed data distribution, the previously observed differences as to the height of the peak (e.g. for *weight*) were remedied with passive imputation of *BMI* and prevention of feedback.
+The plausibility and convergence for this imputation have improved. Plausibility of *weight* and *height* variables has greatly improved. 
+
+In some cases, differences in distributions can be explained by strata in the data, though here *sex* to some extent explains the difference in observed and imputed values of *bp_dia2* and can be further attended (not the variable of interest within the RQ).
+Especially for the depression questions *dep2*, *dep3*, *dep5* the peaks do not align with the observed datapoints. However, the imputed values are not implausible and thus can be used in the analysis.
+
+For selected categorical variables of interest, in two-way tables the distribution of the variable between the complete data and the imputed data are compared, tables include separate columns for each imputation. Further cumulative results are included.
+It could be noticed that for *drink_regularly* distributions of yes/no replies are close to those in the observed data, while for *vig_rec* and *mod_rec* 'yes' responses are overestimated.
+
+
+```{r, MI categ, include = TRUE}
+
+imp.nhanes.dat <- complete(mimp1, "long", include = TRUE)
+
+imp.nhanes.dat <- imp.nhanes.dat %>% 
+  mutate(imputed = .imp > 0,
+         imputed = factor(imputed,
+                          levels = c(F,T),
+                          labels = c("Observed", "Imputed")))
+
+# average for all imputations
+prop.table(table(imp.nhanes.dat$vig_rec,
+                 imp.nhanes.dat$imputed),
+           margin = 2)  %>%
+  kable(digits = 2, caption = "Multiple Imputation, vig_rec distribution", 
+        booktabs = T)
+
+prop.table(table(imp.nhanes.dat$vig_rec,
+                 imp.nhanes.dat$.imp),
+           margin = 2) %>%
+  kable(digits = 2, caption = "Multiple Imputation, vig_rec distribution", 
+        booktabs = T) 
+
+prop.table(table(imp.nhanes.dat$mod_rec,
+                 imp.nhanes.dat$imputed),
+           margin = 2) %>%
+  kable(digits = 2, caption = "Multiple Imputation, mod_rec distribution", 
+        booktabs = T) 
+
+prop.table(table(imp.nhanes.dat$mod_rec,
+                 imp.nhanes.dat$.imp),
+           margin = 2) %>%
+  kable(digits = 2, caption = "Multiple Imputation, mod_rec distribution", 
+        booktabs = T) 
+
+prop.table(table(imp.nhanes.dat$drink_regularly,
+                 imp.nhanes.dat$imputed),
+           margin = 2) %>%
+  kable(digits = 2, caption = "Multiple Imputation, drink_regularly distribution", booktabs = T) 
+
+prop.table(table(imp.nhanes.dat$drink_regularly,
+                 imp.nhanes.dat$.imp),
+           margin = 2) %>%
+  kable(digits = 2, caption = "Multiple Imputation, drink_regularly distribution", booktabs = T) 
+
+```
+
+```{r, include=TRUE}
+propplot(mimp1)
+```
+
+The same observations are visible in the results of imputations visualized for categorical variables, e.g. responses 'yes' are overestimated in all imputations of *mod_rec*.
+For the variable  *n_unsafe_sex_year*, proportional odds imputation changed the distribution considerably, and another imputation method might produce results closer to the distribution of the observed values. 
+
+If we expect that gender might explain the differences for *mod_rec*, we can include those factors into the plot. Overestimation of 'yes' applies to both groups, but more prominent in male group.
+
+```{r, include=TRUE, fig.width = 3.5, fig.height = 3}
+propplot(mimp1, formula = mod_rec ~ sex)
+```
+
+@erler-2020 suggests that for categorical variables we can compare the proportion of values in each category and if it is expected that other variable(s) might explain the differences for, we can include those factors into the plot.
+
+Plotting the proportions of observed (based on incomplete data) and imputed *mod_rec* separately per quartile of age was done to explore further if age could explain the differences. 
+It is revealed (green rectangles) that *mode_rec* 'yes' is more frequent in younger age groups
+in the observed data.
+But with the imputed values 'yes' becomes more likely for more mature age groups.
+Imputations consistently produce other proportion of 'yes'/'no' in more mature age groups, 'yes' is more often than we would expect from the observed data (incomplete).
+
+
+```{r, include=TRUE, fig.width = 3.5, fig.height = 3.5}
+propplot(mimp1, formula = mod_rec ~ cut(age, quantile(age), include.lowest = T))
+```
+
+```{r, convergence function1, include = TRUE, fig.width = 6, fig.height = 5}
+# auto-correlation should ideally be 0, but deviates from that for some variables:
+conv <- mice::convergence(mimp1)
+conv <- conv %>% filter (conv$vrb %in% c("weight", "height", "bmi",
+   "bp_sys2", "bp_dia2", "vig_rec", "mod_rec" , "n_unsafe_sex_year", "drink_regularly", "dep2", "dep3", "dep5", "dep6" , "dep8" , "dep9" ))
+ggplot(conv, aes(x = .it, y = ac)) +
+  geom_hline(yintercept = 0, color = "darkred", linetype = "dashed") +
+  geom_line() + 
+  facet_wrap(~vrb, scales = "free") + 
+  theme_classic() + 
+  labs(x = "Iteration", y = "Auto-correlation")
+```
+
+
+```{r, convergence function2, include = TRUE, fig.width = 6, fig.height = 5}
+ggplot(conv, aes(x = .it, y = psrf)) +
+  geom_hline(yintercept = 1, color = "darkgreen", linetype = "dashed") +
+  geom_line() + 
+  facet_wrap(~vrb, scales = "free") + 
+  theme_classic() + 
+  labs(x = "Iteration", y = "Potential scale reduction factor")
+```
+
+The `mice` function `convergence()` computes two quantitative non-convergence metrics: the auto-correlation and potential scale reduction factor (Gelman-Rubin statistic). Together, these measures quantify non-convergence in terms of non-stationarity and non-mixing of the imputation streams. 
+The function `convergence()` in `mice` provides information on the maximum absolute difference between successive imputations for each variable and at each iteration, which can be plotted to show auto-correlation. Ideally auto-correlation should be close to 0 to demonstrate convergence, which is also the case as demonstrated above (except *dep5*, *dep8*, *dep9*).
+The potential scale reduction factor across imputations should equal one, which is also observed on the plot above. A persistently decreasing trend across iterations indicates potential non-convergence. The are no such instances in the present imputation results. The validity and quality of this imputation is satisfactory. 
+
+# Comparison Ad Hoc Methods, Stochastic Regression Imputation, Multiple Imputation
+
+## Descriptive statistics after ad hoc methods, stochastic regression, MI, full dataset
+
+For brevity only the incomplete variables, which were treated with imputations, are included in the descriptive statistics tables. 
+The descriptive statistics for *age*, *sex*, *household_income*, *pulse* and *time_sed* are the same across all datasets (and imputation procedures), as these had no missing data.
+
+```{r, imp single res, include = TRUE}
+
+rout <- complete(imp_single)
+rout1 <- rout [, c("weight", "height", "bmi",
+   "bp_sys2", "bp_dia2", "vig_rec", "mod_rec" , "n_unsafe_sex_year", "drink_regularly", "dep2", "dep3", "dep5", "dep6" , "dep8" , "dep9" )]
+report((rout1)) %>% 
+  kable(digits = 3, caption = "Regression Imputation", 
+        format = "latex", booktabs =T) %>% 
+  kable_styling(latex_options = c("scale_down","HOLD_position")) 
+```
+
+
+With single regression (linear/logistic) we spot some strange values.
+For example, the maximum *height* is `r round(max(rout$height),2)` cm.
+This is obviously an implausible value. Furthermore, the negative values for the *depression* questions due to linear regression calculation being applied.
+
+Another noteworthy observation is that *vig_rec*, and *drink_regularly* are distributed similarly after the single imputations, while *mod_rec* has slightly lower proportion (39.48 from 42.66%) of 'yes'. Bayesian logistic regression was used to impute value into these binary variables in all imputations. 
+
+Another observation concerns standard deviations, which are high after stochastic regression, 
+as this method accounts for variability better (adding appropriately scaled noise to these
+imputed values, error variance).
+
+
+```{r, stoch2, include = TRUE}
+
+sout <- complete(simp)
+sout1 <- sout [, c("weight", "height", "bmi",
+   "bp_sys2", "bp_dia2", "vig_rec", "mod_rec" , "n_unsafe_sex_year", "drink_regularly", "dep2", "dep3", "dep5", "dep6" , "dep8" , "dep9" )]
+report((sout1)) %>%
+  kable(digits = 3, caption = "Simple Stochastic Regression Imputation", 
+        format = "latex", booktabs = T) %>%
+  kable_styling(latex_options = c("scale_down", "HOLD_position"))
+```
+
+The stochastic regression has generated some strange imputed values (due to linear models used).
+For example, several of the variables have a minimum below zero, which is not possible for these questions. Furthermore, the minimum of *weight*, `r round(min(sout$weight),2)`, seems very low.
+In general, however, the values seem plausible.
+
+ 
+```{r, MI impr3, include = TRUE}
+# Multiply imputed datasets stacked together
+# but NOT including the original data
+mout2 <- complete(mimp1, action = "long")
+
+# for only uncomlete variables!
+mout2 <- mout2 [, c("weight", "height", "bmi",
+   "bp_sys2", "bp_dia2", "vig_rec", "mod_rec" , "n_unsafe_sex_year", 
+   "drink_regularly", "dep2", "dep3", "dep5", "dep6" , "dep8" , "dep9" )]
+
+report((mout2)) %>% 
+  kable(digits = 3, caption = "Multiple Imputation (final)", 
+        format = "latex", booktabs =T) %>% 
+  kable_styling(latex_options = c("scale_down","HOLD_position")) 
+
+```
+
+The dataset after multiple imputation (both based on default settings and after adjustments) does not have the issue with negative values for the *depression* questions. The oddly low minimum *weight* also has disappeared, and instead is a more plausible value. As default multiple imputation method is predictive mean matching for continuous variables, the best match from observed data (donors are used, with the closest values to those predicted by the fitted model), thus no implausible values are found in results. If any other method in multiple imputation would be used, such values might be found.
+
+
+```{r, observed stat, include = FALSE}
+
+data1_m <- data1 [, c("weight", "height", "bmi",
+   "bp_sys2", "bp_dia2", "vig_rec", "mod_rec" , "n_unsafe_sex_year", "drink_regularly", "dep2", "dep3", "dep5", "dep6" , "dep8" , "dep9" )]
+
+report((data1_m)) %>% 
+  kable(digits = 3, caption = "Observed Data", 
+        format = "latex", booktabs =T) %>% 
+  kable_styling(latex_options = c("scale_down","HOLD_position")) 
+
+```
+
+
+```{r, full data descr, include = TRUE}
+
+data1_full <- data_full [, c("weight", "height", "bmi",
+   "bp_sys2", "bp_dia2", "vig_rec", "mod_rec" , "n_unsafe_sex_year", "drink_regularly", "dep2", "dep3", "dep5", "dep6" , "dep8" , "dep9" )]
+
+#report((data_full[ , -c(data_full$id)])) %>%  --- for all set
+report(data1_full) %>%
+  kable(digits = 3, caption = "Fully observed Data", 
+        format = "latex", 
+        booktabs =T) %>% 
+  kable_styling(latex_options = c("scale_down","HOLD_position")) 
+
+```
+
+
+Finally, with access to the dataset with fully observed values, the final comparison can be performed. Previously we compared the imputations to the distributions and descriptive statistics in the observed data (the set with missing values).
+ 
+It is noticeable that after MI imputation, variability is preserved (e.g. not only means, but also standard deviations for *weight*, *height* variables are very close to those in the fully observed data). Standard deviations are close to the dataset upon single stochastic regression, though slightly higher for *weight*, while lower for *height* (closer to full data).
+
+Distributions of categorical upon different imputations vs ground truth seem close to ground truth, though there is some overestimation of 'yes' replies for both *vig_rec*, *mod_rec* and underestimation of 'yes' for *drink_regularly*. This situation is preserved also in single imputations based on regressions (except for *mod_rec* in the dataset after stochastic regression, which is closer to ground truth). 
+
+## Analysis of regression modelling as per RQ: dataset after ad hoc methods, stochastic regression, MI, full dataset
+
+Linear regression models were fitted again to predict *pulse* from *age*, *weight*, *sex*, *household_income*, *drink_regularly*, *vig_rec*, *mod_rec*, and *time_sed*.
+Here we compare the regression models using the data sets after single stochastic/lositc regression, final MI imputation and the complete dataset without missingness (ground truth).
+The tables reporting the results of regression modelling are found in Appendix E.
+
+```{r, fit3 to fit full, include = TRUE}
+#ad hoc - single regression
+fit3<- lm(pulse ~ age + weight + sex + drink_regularly + vig_rec 
+           + mod_rec + household_income  + time_sed, data = rout)
+
+#stochastic regression
+fit4 <- lm(pulse ~ age + weight + sex + drink_regularly + vig_rec 
+           + mod_rec + household_income + time_sed, data = sout)
+
+#improved multiple imputation
+
+fit5c <- with(mimp1, lm(pulse ~ age + weight + sex + drink_regularly 
+                      + vig_rec + mod_rec + household_income + time_sed))
+fit5 <- pool(fit5c)
+s1 <- summary(fit5)
+
+
+#full dataset
+fit_full <- lm(pulse ~ age + weight + sex + drink_regularly + vig_rec 
+           + mod_rec + household_income  + time_sed, data = data_full)
+```
+
+```{r, plot sums reg, include = TRUE}
+
+plot_summs(fit3, fit4, fit5, fit_full,
+  model.names = c(
+    "Single Linear (Logistic) Regression", 
+    "Stoch.Regr.Imputation",
+    "Multiple Imputation",
+    "Fully observed data"
+  )
+)
+```
+
+When comparing the estimates of the predictors in 3 different models, one observation that stands out is that they are largely in agreement, when models are based on the data sets after missing values were imputed (via single regression, stochastic regression, final MI imputation). 
+E.g., the p-values of the pooled results (models based on MI imputed data) are above the 0.05 threshold for all the predictors of interest (*vig_rec*, *mod_rec*, *drink_regularly*), indicate that the observed differences in the pooled estimates are likely to have occurred by chance. It suggests weak associations of the selected predictors with *pulse* values. Arguably, pooling the results of multiple regressions from MI data creates estimates that are more accurate and better reflect the uncertainty of the missing data (as described above).
+
+In all models, including the one based of the complete dataset (ground truth), only *weight* and *sex* were significantly associated with *pulse*. The estimates produced for these variables are also very similar in all of the models, with only minor differences. And both are align with the previous studies: women are more likely to have higher pulse rates, and there is positive association between weight and pulse rate.
+
+The $R^2$ and adjusted $R^2$ refer to variance explained by the models, which are very similar across the different models. These values also show us that the models do not explain the data well, which we also know from the small amount of significant predictors. The $R^2$ statistic is not normally distributed, so we should use a slightly more complex pooling method for datasets after MI.
+Adjusted $R^2$ are very slightly lower in the models based on MI imputed data, data based on ad hoc methods than the model based on the ground truth data compared. The model based on data imputed via single stochastic (logistic for categorical predictors) regression revealed slightly lower $R^2$ and adjusted $R^2$. 
+
+Some coefficients differ in the sign (direction). E.g. in the model based on MI imputed data (the same for other models based on regression-imputed datasets) the sign changed to negative for *vig_rec* ('no'), compared to positive in the model based on data after the mean/mode imputations and the model based on ground truth data (full set). The model based on full dataset conforms better with expectation of higher pulse rates for those having no vigorous exercise routine and is more reasonable within the theoretical considerations, though the estimate didn't reach the level of significance. However, when fitted on the fully observed,
+The predictor *drink_regularly* (no) in the models based on imputed data (all sets after imputation, and the set after list-wise deletion) kept to be positively associated with pulse score (again, not reaching significance level, thus might be by chance). In the model based on ground truth data (full set) the effect is negative. The model based on full dataset again conforms better with expectation of lower pulse rates for those having no habit of regular drinking (the estimate didn't reach the level of significance). 
+The weak association of *pulse* with moderate exercise regime kept throughout the models: those with not having moderate recreational exercise are likely to have higher pulse rates. This inference is in agreement with the previous studies, but again lacs statistical power.  
+
+The estimates of model based on MI data seem sensible in terms of statistically significan associations and *mode_rec*. RIV, $λ$, and FMI values all suggest that the missing data have not had a very large influence on the results. However, the $λ$ for $β2$ (*weight*) tells us that 33% of the sampling variance in $β2$ is attributable to the missing data and our treatment thereof, while  for $β5$ (*vic_rec*) it reaches 27%.  
+
+FMI estimates are low, except for  *vic_rec* 30% and *weight* 37%. We can conclude e.g. for *vig_rec* certain proportion of information was lost to the missing data. These regression results reveal that further tuning the imputation methods and maybe increasing number of imputations are needed to reach the satisfactory quality of the imputations. 
+
+Though a distinct advantage of MI is that it can produce unbiased estimates with correct confidence intervals with relatively low number of datasets (e.g., 5), we can see that e.g. for *vic_rec* standard errors are higher and coefficient has opposite sign compared to the models fitted on full dataset with no missingness. 
+
+It should be noted that the effects of the key predictors (*vig_rec*, *mod_rec*, *drink_regularly*) didn't reach significance levels in neither of the models fitted, including the once based on the ground truth data. It might be possible that effects are significant if interaction with e.g. age, sex is taken into account. These issues can be further investigated. 
+
+There are some trends in the behavior of the models based on datasets with imuted data, where however it must be noted the differences are very small.
+For example, model based on MI imputed dataset gives mostly the highest standard errors of the estimates. This could be due to it better reflecting the uncertainty than the other methods, and thus producing more conservative estimates. Finally, linear regression tends to produce estimates slightly higher than of MI and stochastic regression, which aligned well with attenuating the strength of relationship not taking into account uncertainty.
+
+
+# Conclusion
+
+## Relative strengths and limitations of procedures
+
+The single linear regression has some severe limitations, as discussed earlier. For example, it imputes all variables based on a linear regression model, causing the values to artificially boost the regression. In our model, this did not happen as the relationship between the variables was too weak and the missing data too few for this effect to have much of an impact. However, in general this is an issue that needs to be taken into account when using linear regression.
+
+An obvious limitation of single stochastic regression is its inability to deal with factor variables. However, we were able to solve this issue by specifying another method (logistic regression) to use for factor variables. A strength of stochastic regression over linear regression is that it adds uncertainty (though limited) to the imputed values, thus better reflecting the uncertainty inherent to imputation of missing values. Another limitation is the generation of implausible values such as the negative values for the *depression* questions.
+Finally, as the stochastic regression is still a single regression imputation, it tends to bias the regression coefficients, with all the issues that follow from that as discussed earlier in this report.
+
+Multiple imputation does not have this tendency to generate implausible values at the default multiple imputation method, as predictive mean matching method finds the best match from observed data. It does of course have the possibility if other imputation methods are used. However, this imputation used the default settings, with some small adjustments (e.g. passive imputation, slight modification of predictor matrices) to ensure the model was correct for our data. 
+Multiple imputation is a powerful procedure and by further specifying the model the data can be an even better fit. The MI predicted values take into account the two sources of uncertainty due to the missing values: the parameters are estimated with uncertainty (std. error) and there is is random variation, prediction errors are taken into account. We have demonstrated above with visualizations how imputations add slight differences in distributions of each imputed set. 
+We hypothesize that testing other methods for binary variables could improve the imputations, e.g. random forest imputations or Lasso select + logistic regression.
+
+
+## Discussion on RQ
+
+We cannot reject the null hypothesis of the research question because we found no significant relationship between (*vig_rec*, *mod_rec*, *drink_regularly*) and *pulse* score using our imputed data, when *age*, *sex*, *weight* and *income* are controlled.
+
+In the complete data, the effects of *vig_rec* and *drink_regularly* had opposite sign, more conforming to the previous studies. This might point to the deficiency of imputation models, or MNAR mechanism (e.g. those having no vigorous exercise routine were more likely to skip this question).
+
+The difference between the models based on all the datasets which underwent missing data treatment (imputation based on single regressions or MI imputations based on predictive mean matching and logistic regression for categorical predictors) is small and does not affect whether or not the null hypothesis is rejected. 
+If we take into account only the statistically significant effects, we would reach the same conclusion on the statistically significant association of pulse with weight, sex using the imputed datasets or the full datasets.
+We can therefore generally conclude that our MI was adequate when addressing our research questions as it would not have led to a different conclusion, but there is a room for improvement of the methods of dealing with missing values in binary categorical variables.
+
+## Limitations
+
+There are some limitations to the models and analysis we used. For example, the default imputation settings in MI were not appropriate for our missing data and led to non-convergence and low plausibility on several variables. We then used passive imputation for *BMI* and adjusted predictor matrix to avoid circularity and accounted for some issues of collinearity. While the final imputation had acceptable convergence and plausibility, the depression scores still had weaker convergence. The imputations of the categorical predictors are not addressed thoroughly, e.g. ignoring possible interactions and tuning the imputation methods. No division in to train and test sets was performed. 
+
+## Potential extensions/improvements
+
+A potential improvement would be to more extensively investigate the best MI model for the dataset. For example, we determined that our data is not MCAR and assumed MAR based on limited tests. A sensitivity analysis may have also been useful in determining the optimal MI model. In general, the imputed values were plausible. 
+Another potential improvement to our multiple imputation model is to change the visiting sequence according to the characteristics of the missingness pattern. We chose MI models with nearly all predictor variables, which can be further improved by an analysis on what variables might be acceptable to remove from the prediction matrix in order to prevent overfitting. We can do this according to what makes the most sense in our theory, and according to correlations between variables [@van-buuren-2018, Chapter 6]. 
+
+# References
+
+References to R Packages are included.
+
+
+::: {#refs}
+:::
+
+```{r packages citation}
+
+# print to output
+print("R Packages used: ")
+c("bibtex", "tidyverse", "ggplot2", 
+  "mice", "naniar",
+  "ggmice", "VIM",
+  "purrr", "magrittr", 
+  "diffdf", "finalfit", 
+  "kableExtra", "gridExtra", "broom") %>%
+  map(citation) %>%
+  print(style = "text")
+
+## print packages
+#toBibtex(citation(c("bibtex", "tidyverse", "ggplot2", 
+#  "mice", "naniar","ggmice", "VIM",
+#  "purrr", "magrittr", "diffdf", "finalfit", 
+#  "kableExtra", "gridExtra", "broom")))
+
+# make bib file 
+
+#knitr::write_bib(c("bibtex", "tidyverse", "ggplot2", 
+#  "mice", "naniar","ggmice", "VIM",
+#  "purrr", "magrittr", "diffdf", "finalfit", 
+#  "kableExtra", "gridExtra", "broom"), width = 60, file = 'packages.bib')
+
+
+```
+
+
+# Appendix {.unnumbered}
+
+## Appendix A: Correlation table
+
+```{r, correlation table, include = TRUE, echo = FALSE, fig.pos="H"}
+
+var_cor %>% 
+  kable(caption = "Pearson Correlations, selected continuous variables", 
+        format = "latex", booktabs =T) %>% 
+  kable_styling(latex_options = c("scale_down","HOLD_position"))
+```
+
+A quick (and dirty) way to check for strong correlations between all variables,
+Correlation coefficients for categorical variables are used for
+visualization, not as statistical results.
+
+```{r, corr quick, include = TRUE, echo = FALSE}
+
+# recode all vars as numeric and compute spearman correlation
+Corr <- cor(sapply(data1, as.numeric), 
+            use = "pairwise.complete.obs", 
+            method = "spearman")
+#round(Corr, 3)
+
+corrplot::corrplot(Corr, method = "square", type = "upper",
+tl.col = "black", tl.cex = 0.5)
+
+```
+
+## Appendix B: Distribution and association plots
+
+The distributions of all variables having missing values, based on the observed cases are given, which will be used as a guidance for selection of the imputation methods. E.g. predictive mean matching can be used for all types of variables, and for skewed distributions, as it is robust against misspecification, where the normal model is not.
+
+```{r, distribution data plots, include = TRUE, echo = FALSE}
+
+# subset columns only with missing values
+data1_mv <- data1 [ , !colSums(is.na(data1)) == 0]
+
+# get an overview visualization of distributions for all variables,
+# based on the observed cases
+# code inspiration from https://rpubs.com/minhtri/968586
+par(mfrow = c(3, 3), mgp = c(2, 0.6, 0), mar = c(2, 3, 3, 0.5))
+for (i in 1:ncol(data1_mv)) {
+if (is.numeric(data1_mv[, i])) {
+hist(data1_mv[, i], nclass = 50, xlab = "",
+main = paste0(names(data1_mv[i]), " (",
+round(mean(is.na(data1_mv[, i])) * 100, 2), "% NA)")
+)
+} else {
+barplot(table(data1_mv[, i]), ylab = "Frequency",
+main = paste0(names(data1_mv[i]), " (",
+round(mean(is.na(data1_mv[, i])) * 100, 2), "% NA)"))
+}
+}
+```
+
+Here scatterplots are given when the predictor or control variable is continuous, and boxplots for when the predictor or control variable is categorical.
+The scatterplot of *age* and *pulse* does not seem to show a strong relationship, which is reflected in the low correlation value seen in Appendix A. The small difference between men and women on pulse seems to be negligible.
+The relationship between *pulse* and *weight* is harder to categorize based on the scatter plot.
+We see a large amount of data points in the moderate regions of *pulse* and *weight*, with a sizable spread of data points to the higher end of the scale of *weight*.
+There seems to be a difference in *pulse* between the *income* groups, although it is not possible to say based on the chart whether any differences might be significant.
+There is a saw-tooth in the graph, where there is no clear linear relation between *pulse* and *income* group but instead the *pulse* level varies between groups.
+There seems to be no difference in average *pulse* between the people who do and do not do *vigorous recreational exercise*, and the same goes for *moderate recreational exercise*.
+Lower quartile values of *pulse* both for *moderate* and *vigorous* for those who replied 'yes' start at lower level (more variable) than for those who did no exercises.
+For *time spent sedentary* there also does not seem to be any relationship with *pulse*.
+Finally, there seems to be no real difference between people who *drink regularly* and those who do not on *pulse*.
+
+```{r, distribution assoc plots, include = TRUE, echo = FALSE}
+
+par(mfrow=c(2,2), mgp = c(1, 0.4, 0), mar = c(2, 3, 3, 0.5))
+plot(pulse ~ age, data = data2)
+plot(pulse ~ sex, data = data2)
+
+plot(pulse ~ weight, data = data2)
+plot(pulse ~ household_income, data = data2)
+plot(pulse ~ vig_rec, data = data2)
+plot(pulse ~ mod_rec, data = data2)
+plot(pulse ~ time_sed, data = data2)
+plot(pulse ~ drink_regularly, data = data2)
+
+```
+
+## Appendix C: Missing data visualization
+
+The first plot is for the entire data set, the second is for the subset of variables used in our analysis.
+Patterns of missingness are also visualized for subset of the variables having missing values, 
+from which some obvious overlapping patterns are observed (missing values for 4 depression items, 
+those for second measurement of blood pressure, missing values of *vig_rec* and *mod_rec*). 
+There are 120 misssing patterns, and 9.1% of datapoints are missing. 
+Note: not monotone patterns.
+
+
+```{r, missing data plots, include = TRUE, echo = FALSE}
+
+# calculating the number of cells with na 
+missingcells = sum(is.na(data1)) 
+print(paste0("Missing value cells: ", missingcells))
+  
+# calculating percentage of missing values 
+percentage = round ((missingcells * 100 )/(prod(dim(data1))),2)
+print(paste0("Percentage of missing values' cells: ", percentage, " %"))
+
+#number of missing patterns
+print(paste0('Missing patterns total: ', 
+             (nrow(md.pattern(data1, plot = FALSE)) - 1)))
+
+# complete dataset
+naniar::gg_miss_var(data1, show_pct = TRUE)
+
+# a very informative visualization with vim package
+#library(VIM)
+aggr (data1_mv, col=c('navy', 'yellowgreen'), plot = T, prop = T, numbers = F,
+labels=names(data1_mv),
+combined = T, sortVars = T, cex.axis=.7, gap=4)
+
+```
+
+
+## Appendix D: Linear regression models based on data treated with ad hoc methods
+
+```{r app C, include = TRUE}
+
+tidy(fit0) %>%
+  kable(
+    caption = "Linear model (data: complete cases, listwise deletion)",
+    digits = 3, format = "latex", booktabs =T) %>% 
+  kable_styling(latex_options = c("scale_down","HOLD_position"))
+
+glance(fit0) %>%
+  kable(digits = 3, format = "latex", booktabs =T) %>% 
+  kable_styling(latex_options = c("scale_down","HOLD_position"))
+
+tidy(fit1) %>%
+  kable(
+    caption = "Linear regression model 
+    (data with Mean and Mode Imputations)",
+    digits = 3, format = "latex", booktabs =T) %>% 
+  kable_styling(latex_options = c("scale_down","HOLD_position"))
+
+glance(fit1) %>%
+  kable(digits = 3, format = "latex", booktabs =T) %>% 
+  kable_styling(latex_options = c("scale_down","HOLD_position"))
+
+tidy(fit2) %>%
+  kable(
+    caption = "Linear model (data: single norm.predict and logreg)",
+    digits = 3, format = "latex", booktabs =T) %>% 
+  kable_styling(latex_options = c("scale_down","HOLD_position"))
+
+glance(fit2) %>%
+  kable(digits = 3, format = "latex", booktabs =T) %>% 
+  kable_styling(latex_options = c("scale_down","HOLD_position")) 
+
+```
+
+## Appendix E: Linear regression models based on data treated with single stohastic regression, after final MI and complete data.
+```{r app D, include = TRUE}
+
+#stochastic regression
+
+tidy(fit4) %>%
+  kable(
+    caption = "Stochastic Regression Imputation",
+    digits = 3, format = "latex", booktabs =T) %>% 
+  kable_styling(latex_options = c("scale_down","HOLD_position")) 
+
+glance(fit4) %>%
+  kable(digits = 3, format = "latex", booktabs =T) %>% 
+  kable_styling(latex_options = c("scale_down","HOLD_position"))
+
+#improved multiple imputation
+
+tidy(fit5) %>%
+  kable(
+    caption = "Multiple Imputation (improved)",
+    digits = 3, format = "latex", booktabs =T) %>% 
+  kable_styling(latex_options = c("scale_down","HOLD_position")) 
+
+glance(fit5) %>%
+  kable(digits = 3, format = "latex", booktabs =T) %>% 
+  kable_styling(latex_options = c("scale_down","HOLD_position")) 
+
+# pool F for the model fit5
+print(paste0("Pool F-statistic for the model based on MI data: "))
+print(D1(fit5c))
+
+#full dataset
+
+tidy(fit_full) %>%
+  kable(
+    caption = "Model based on fully observed data (ground truth)",
+    digits = 3, format = "latex", booktabs =T) %>% 
+  kable_styling(latex_options = c("scale_down","HOLD_position")) 
+
+glance(fit_full) %>%
+  kable(digits = 3, format = "latex", booktabs =T) %>% 
+  kable_styling(latex_options = c("scale_down","HOLD_position")) 
+
+```
+
